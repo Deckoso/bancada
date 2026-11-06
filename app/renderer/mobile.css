@@ -1,0 +1,55 @@
+/* Bancada no celular/iPad (acesso remoto). Barra lateral e painel viram gavetas; terminal ocupa a tela. */
+html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+#remote-banner { position: fixed; top: env(safe-area-inset-top, 0); left: 0; right: 0; z-index: 80; padding: 8px 14px; font: 500 13px var(--font);
+  text-align: center; background: var(--surface); color: var(--txt); border-bottom: 1px solid var(--stroke); }
+#remote-banner.err { color: var(--err); }
+#remote-banner.warn { color: var(--amber); }
+.drag { -webkit-app-region: initial; }
+.side-top { padding-left: 16px; }
+#keybar { display: flex !important; }
+button, .tab, .nav-proj, .mini { touch-action: manipulation; }
+.mini { padding: 6px 9px; font-size: 13px; }
+
+@media (max-width: 1100px) {
+  .m-only { display: inline-flex !important; }
+  #keybar { display: flex !important; }
+  #app { grid-template-columns: 1fr; padding-top: env(safe-area-inset-top, 0); }
+  #side, #panel { position: fixed; top: 0; bottom: 0; z-index: 40; width: min(86vw, 340px); transition: transform .25s var(--ease); box-shadow: var(--shadow-lg);
+    padding-top: env(safe-area-inset-top, 0); }
+  #side { left: 0; transform: translateX(-105%); }
+  #panel { right: 0; transform: translateX(105%); }
+  body.m-side-open #side { transform: none; }
+  body.m-panel-open #panel { transform: none; }
+  body.m-side-open #m-scrim, body.m-panel-open #m-scrim { display: block !important; }
+  #m-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 30; }
+  #proj-head { height: auto; min-height: 52px; padding: 8px 10px; gap: 8px; flex-wrap: wrap; }
+  .head-title { flex-wrap: wrap; row-gap: 4px; }
+  .head-title .path { display: none; }
+  .head-actions { flex-wrap: wrap; }
+  #tabs { padding-top: 4px; }
+  .tab { padding: 8px 12px; }
+  .term { font-size: 12px; }
+  .modal-card, .modal-card.wide { width: calc(100vw - 20px); max-height: 90vh; }
+  .grid2 { grid-template-columns: 1fr; }
+  .today, .inbox { padding: 18px 12px 60px; }
+}
+
+#keybar { gap: 6px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0)); background: #0b0b0e; border-top: 1px solid rgba(255,255,255,.08); overflow-x: auto; flex: none; }
+#keybar button { flex: none; min-width: 44px; height: 36px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06);
+  color: #e8e8ed; font: 600 13px var(--mono); }
+#keybar button:active { background: rgba(124,92,255,.35); }
+#keybar { scrollbar-width: none; }
+#keybar::-webkit-scrollbar { display: none; }
+#tabs { scrollbar-width: none; }
+#tabs::-webkit-scrollbar { display: none; }
+
+/* v0.2: no celular, 1 painel por vez (a divisão é do Mac); arrastar aba não divide */
+.pane-head { height: 22px; }
+.pane-body { padding-left: 4px; }
+
+/* cartões de pergunta no celular: largura toda, botões fáceis de tocar */
+.ask-card { left: 4px; right: 4px; bottom: 4px; max-height: 82%; }
+.ask-opt { padding: 8px 14px; font-size: 13px; }
+.ask-btns { padding-left: 0; }
+.ask-note { margin-left: 0; width: 100%; }
+.ask-choice { padding: 12px; }

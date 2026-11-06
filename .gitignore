@@ -1,0 +1,10 @@
+.DS_Store
+macos/dist/
+node_modules/
+dist/
+app/renderer/vendor/
+*.db
+*.db-wal
+*.db-shm
+dist-next/
+dist-share/

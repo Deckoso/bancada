@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Bancada</title>
+<link rel="stylesheet" href="vendor/aurora-tokens.css">
+<link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <div class="side-top drag">
+      <img class="brand-logo" src="assets/bancada-logo-128.png" alt=""><span class="brand">Bancada</span>
+    </div>
+    <nav id="nav">
+      <button class="nav-item" data-view="today" id="nav-today"><span class="ic">☀︎</span><span>Hoje</span><span class="count" id="today-count"></span></button>
+      <div class="nav-label">Em foco <span class="hint" id="focus-hint"></span></div>
+      <div id="focus-list"></div>
+      <div class="nav-label nav-toggle" id="shelf-toggle">Estante <span class="chev">›</span></div>
+      <div id="shelf-list" class="collapsed"></div>
+      <button class="nav-item" data-view="inbox" id="nav-inbox"><span class="ic">⬚</span><span>Inbox</span><span class="count" id="inbox-count"></span></button>
+    </nav>
+    <div class="side-bottom">
+      <button class="ghost" id="btn-new-project">+ Projeto</button>
+      <button class="ghost" id="btn-guided" title="Novo projeto guiado: a IA te entrevista, uma pergunta por vez, e no fim monta o pedido para a forja">💬 Guiado</button>
+      <button class="ghost icon" id="btn-settings" title="Ajustes">⚙︎</button>
+    </div>
+  </aside>
+
+  <main id="center">
+    <div class="m-bar m-only-flex">
+      <button class="mini m-only" id="m-side-btn" title="Projetos">☰ Projetos</button>
+      <button class="mini m-only" id="m-panel-btn" title="Painel">Painel ▸</button>
+    </div>
+    <header id="proj-head" class="drag"></header>
+    <section id="view-project" class="view">
+      <div id="tabs"></div>
+      <div id="terms"></div>
+      <div id="keybar" class="m-only">
+        <button data-seq="esc">Esc</button><button data-seq="tab">Tab</button><button data-seq="stab">⇧Tab</button>
+        <button data-seq="up">↑</button><button data-seq="down">↓</button><button data-seq="left">←</button><button data-seq="right">→</button>
+        <button data-seq="enter">⏎</button><button data-seq="ctrlc">^C</button><button data-seq="slash">/</button>
+      </div>
+      <div id="terms-empty" class="empty hidden"></div>
+    </section>
+    <section id="view-today" class="view hidden"></section>
+    <section id="view-inbox" class="view hidden"></section>
+  </main>
+
+  <aside id="panel"></aside>
+</div>
+
+<div id="m-scrim" class="hidden-scrim"></div>
+<div id="modal" class="modal hidden"><div class="modal-card" id="modal-card"></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="vendor/addon-web-links.js"></script>
+<script src="vendor/addon-unicode11.js"></script>
+<script src="dom.js"></script>
+<script src="dnd.js"></script>
+<script src="layout.js"></script>
+<script src="terminals.js"></script>
+<script src="files-panel.js"></script>
+<script src="asks-ui.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
