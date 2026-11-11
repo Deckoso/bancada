@@ -12,7 +12,7 @@ uma decisão, você responde por botões, no Mac ou no celular.
 
 ![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.4.0-7c5cff)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.5.0-7c5cff)
 
 <img src="docs/img/principal.png" width="860" alt="Bancada: projetos em foco, dois terminais lado a lado, cartões esperando resposta e o painel do projeto">
 
@@ -40,6 +40,10 @@ uma decisão, você responde por botões, no Mac ou no celular.
 - Bolinha na aba e no projeto: **trabalhando**, **esperando você** (âmbar), **terminou**, **esperando tarefa em segundo plano**.
 - Funciona por hooks do Claude Code passados com `--settings` — somam-se aos seus, nada no seu projeto é alterado.
 - Aviso do macOS (e no celular) quando uma IA precisa de você; clicar leva direto ao terminal.
+
+### O que ela está fazendo agora (v0.5)
+- **Faixa de atividade** no topo de cada terminal: ferramenta em andamento e há quanto tempo, tarefas em segundo plano com a última linha da saída, agentes ativos, **quanto falta** (pelo andamento ou pela mediana das vezes anteriores) e aviso de "sem sinal".
+- **Escritório**: uma sala isométrica onde cada Claude é um personagem — na mesa trabalhando, em pé esperando você, na máquina com tarefa em segundo plano; agentes entram pela porta e saem quando terminam. Clicar leva ao terminal.
 
 ### Responder por botões (v0.4)
 - **Cartões dentro do painel do terminal.** O Claude da Bancada ganha três ferramentas (servidor MCP próprio, sem dependências):

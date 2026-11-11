@@ -84,6 +84,7 @@
     capture: { submit: call('capture:submit'), hide: call('capture:hide'), onOpen: on('capture:open') },
     remote: null,
     asks: { list: call('asks:list'), answer: call('asks:answer'), dismiss: call('asks:dismiss'), onChanged: on('asks:changed') },
+  activity: { list: call('activity:list'), onChanged: on('activity:changed') },
   claude: { states: call('claude:states'), seen: call('claude:seen'), context: call('claude:context'), onState: on('claude:state') },
     // o layout dos painéis é do Mac: o celular mostra 1 painel e não grava nada
     ui: { focusTerm: async () => true, onGoTerminal: on('ui:goTerminal'), layoutGet: async () => null, layoutSet: async () => true },

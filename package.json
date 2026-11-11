@@ -1,7 +1,7 @@
 {
   "name": "bancada",
   "productName": "Bancada",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Bancada — terminais por projeto, onde parei e captura rápida (evolução do PromptPad)",
   "author": "Deckoso",
   "repository": {

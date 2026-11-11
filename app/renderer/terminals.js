@@ -43,16 +43,33 @@
       window.bancada.pty.onSize(({ id, cols, rows }) => {
         const t = terms.get(id); if (!t) return;
         t.stale = cols !== t.term.cols || rows !== t.term.rows;   // outro aparelho pegou o tamanho
+        markStale(t);
       });
+    }
+    // no Mac: o celular desconectou → o Mac retoma o tamanho dos terminais à vista (sem esperar digitar)
+    if (!window.__REMOTE && window.bancada.remote && window.bancada.remote.onClients) {
+      let last = 0;
+      window.bancada.remote.onClients(({ n }) => { if (n < last) reclaimAll(); last = n; });
     }
     // um único ResizeObserver; observa cada terminal (o painel muda de tamanho ao arrastar a divisória)
     ro = new ResizeObserver((entries) => {
       for (const en of entries) { const t = terms.get(en.target.dataset.id); if (t && t.el.offsetParent) fitOne(t); }
     });
     // voltar para esta janela/aba: retoma o tamanho daqui
-    const reclaim = () => { for (const t of terms.values()) if (t.el.offsetParent && t.stale) fitOne(t, true); };
-    window.addEventListener('focus', reclaim);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) reclaim(); });
+    window.addEventListener('focus', reclaimAll);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reclaimAll(); });
+  }
+
+  function reclaimAll() { for (const t of terms.values()) if (t.el.offsetParent && t.stale) fitOne(t, true); }
+
+  // aviso no painel enquanto outro aparelho está com o tamanho do terminal (o texto sai estreito/cortado aqui)
+  function markStale(t) {
+    let b = t.el.querySelector(':scope > .term-stale');
+    if (!t.stale) { if (b) b.remove(); return; }
+    if (b) return;
+    b = window.UI.h('button', { class: 'term-stale', title: 'O terminal está no tamanho do outro aparelho', onmousedown: (e) => { e.preventDefault(); e.stopPropagation(); fitOne(t, true); } },
+      window.__REMOTE ? 'Tamanho do Mac · toque para ajustar aqui' : '📱 No tamanho do celular · clique para voltar ao do Mac');
+    t.el.appendChild(b);
   }
 
   function fitOne(t, force = false) {
@@ -60,7 +77,7 @@
       const before = `${t.term.cols}x${t.term.rows}`;
       t.fit.fit();
       if (force || t.stale || before !== `${t.term.cols}x${t.term.rows}` || !t.sizedOnce) {
-        if (t.alive) { window.bancada.pty.resize(t.id, t.term.cols, t.term.rows); t.stale = false; t.sizedOnce = true; }
+        if (t.alive) { window.bancada.pty.resize(t.id, t.term.cols, t.term.rows); t.stale = false; t.sizedOnce = true; markStale(t); }
       }
     } catch {}
   }
@@ -146,6 +163,8 @@
         return true;
       });
       if (term.textarea) term.textarea.addEventListener('focus', () => { if (t.stale) fitOne(t, true); onFocusCb(t.id); });
+      // clicar no terminal também é "estou usando aqui": retoma o tamanho (o foco não dispara se já estava focado)
+      el.addEventListener('mousedown', () => { if (t.stale) fitOne(t, true); });
       bindInputs(t);
     } else if (container && t.el.parentElement !== container) {
       container.appendChild(t.el);

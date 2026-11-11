@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('bancada', {
   remote: { status: call('remote:status'), enable: call('remote:enable'), disable: call('remote:disable'), devices: call('remote:devices'),
     revoke: call('remote:revoke'), pairStart: call('remote:pairStart'), onClients: on('remote:clients') },
   asks: { list: call('asks:list'), answer: call('asks:answer'), dismiss: call('asks:dismiss'), onChanged: on('asks:changed') },
+  activity: { list: call('activity:list'), onChanged: on('activity:changed') },
   claude: { states: call('claude:states'), seen: call('claude:seen'), context: call('claude:context'), onState: on('claude:state') },
   ui: { focusTerm: call('ui:focusTerm'), onGoTerminal: on('ui:goTerminal'), layoutGet: call('ui:layoutGet'), layoutSet: call('ui:layoutSet') },
   files: { roots: call('files:roots'), list: call('files:list'), read: call('files:read'), reveal: call('files:reveal'), openInCursor: call('files:openInCursor'),

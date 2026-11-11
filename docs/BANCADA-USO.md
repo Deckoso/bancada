@@ -2,7 +2,7 @@
 
 Guia de todas as funções, na ordem em que você encontra cada uma. Os prints usam projetos fictícios.
 
-**Sumário:** [Primeira abertura](#primeira-abertura) · [Projetos: foco, estante, Hoje e Inbox](#projetos-foco-estante-hoje-e-inbox) · [Painel do projeto](#painel-do-projeto) · [Captura rápida (⌥Space)](#captura-rápida-space) · [Terminais e IAs](#terminais-e-ias) · [Cartões de pergunta](#cartões-de-pergunta-v04) · [Novo projeto guiado](#novo-projeto-guiado--guiado-na-barra-lateral) · [Assistentes de IA](#assistentes-de-ia-ajustes--assistentes-de-ia) · [Estado de cada Claude](#estado-de-cada-claude) · [Divisão de tela](#divisão-de-tela) · [Arquivos e Mudanças](#painel-lateral-projeto--arquivos--mudanças) · [Imagens](#imagens-para-o-claude) · [Contexto e servidor local](#contexto-e-servidor-local) · [Celular e iPad](#celular-e-ipad) · [Ajustes](#ajustes) · [Atalhos](#atalhos) · [Onde ficam os seus dados](#onde-ficam-os-seus-dados)
+**Sumário:** [Primeira abertura](#primeira-abertura) · [Projetos: foco, estante, Hoje e Inbox](#projetos-foco-estante-hoje-e-inbox) · [Painel do projeto](#painel-do-projeto) · [Captura rápida (⌥Space)](#captura-rápida-space) · [Terminais e IAs](#terminais-e-ias) · [Cartões de pergunta](#cartões-de-pergunta-v04) · [Novo projeto guiado](#novo-projeto-guiado--guiado-na-barra-lateral) · [Assistentes de IA](#assistentes-de-ia-ajustes--assistentes-de-ia) · [Estado de cada Claude](#estado-de-cada-claude) · [Escritório](#escritório) · [Divisão de tela](#divisão-de-tela) · [Arquivos e Mudanças](#painel-lateral-projeto--arquivos--mudanças) · [Imagens](#imagens-para-o-claude) · [Contexto e servidor local](#contexto-e-servidor-local) · [Celular e iPad](#celular-e-ipad) · [Ajustes](#ajustes) · [Atalhos](#atalhos) · [Onde ficam os seus dados](#onde-ficam-os-seus-dados)
 
 ## Primeira abertura
 1. A Bancada procura em `~/Documentos` uma pasta `PROJETOS` (ou `Projetos` / `Projects`), inclusive uma pasta abaixo, no formato `PROJETOS/<categoria>/<projeto>` — por exemplo `PROJETOS/01-trabalho/loja-app`. Ela lista o que achou; marque os projetos que quer e use ☆ para pôr até 3 **em foco**.
@@ -116,6 +116,28 @@ Aparece na aba, no cabeçalho do painel e no projeto da barra lateral, onde a co
 
 Clicar no aviso leva ao terminal. No celular o aviso aparece dentro da página, porque o Safari só permite notificação de site com HTTPS.
 
+### O que ele está fazendo agora (v0.5)
+Quando o Claude está trabalhando, uma faixa aparece no topo do painel do terminal, mesmo que o terminal pareça parado:
+- a **ferramenta em andamento** e há quanto tempo (ex.: "Rodando · Testes · 1:12");
+- cada **tarefa em segundo plano** com a **última linha da saída** dela (ex.: "Rendered 412/900 frames") e "sem saída há X" quando ela se cala;
+- os **agentes** ativos: o que cada um recebeu para fazer e o que está fazendo agora;
+- **quanto falta**: pelo andamento, quando a saída mostra porcentagem ou "N de M", ou pela mediana das vezes anteriores da mesma ferramenta ("costuma levar 15 min"). Na primeira vez só aparece o tempo decorrido;
+- **⚠ sem sinal há X min** quando nada foi escrito por mais de 2 minutos.
+
+Clicar na faixa abre o **Escritório**.
+
+### Escritório
+Aba **Escritório** no painel lateral (⤢ abre em tela grande): uma sala onde cada Claude é um personagem.
+- **trabalhando**: na mesa, monitor aceso, balão com a ferramenta e o tempo;
+- **esperando você**: em pé, balão âmbar "! esperando você";
+- **tarefa em segundo plano**: na máquina, com barra de andamento;
+- **agentes** entram pela porta, sentam numa mesa livre e saem quando terminam;
+- sem nada acontecendo, todos no sofá.
+
+Clicar num personagem leva ao terminal dele. **Este projeto / Todos** troca o que aparece na sala.
+
+A faixa e o Escritório só leem arquivos locais seus: a conversa do Claude (`~/.claude/projects`) e a saída das tarefas na pasta de tarefas do próprio Claude. O histórico de durações fica em `<dados>/hooks/duracoes.json`.
+
 Como funciona: o Claude é aberto com `--settings <dados>/hooks/settings.json`. Esses hooks **se somam** aos que você já tem (do projeto, do motor ou do seu usuário) e nada neles é alterado.
 
 ## Divisão de tela
@@ -154,7 +176,7 @@ Use a Bancada pelo celular como se estivesse no Mac: terminais, estados, cartõe
 3. Leia o QR com a câmera do celular. Ele vale 5 minutos e uma vez só. No Safari, **Compartilhar → Adicionar à Tela de Início** deixa com cara de app.
 4. Cada aparelho pareado aparece na lista, com **Revogar** para desconectar.
 
-- O terminal é compartilhado: o tamanho segue quem está usando (Mac ou celular). Há uma barra de teclas (Esc, Tab, setas, Enter…).
+- O terminal é compartilhado: o tamanho segue quem está usando (Mac ou celular). Quando o celular encolhe um terminal, o Mac mostra "📱 No tamanho do celular · clique para voltar ao do Mac"; clicar no terminal também devolve o tamanho, e ao desconectar o celular o Mac volta sozinho. Há uma barra de teclas (Esc, Tab, setas, Enter…).
 - No celular não dá para instalar IAs, abrir o Finder ou o Cursor, nem a prévia do localhost.
 - Enquanto o acesso remoto estiver ligado, o Mac não entra em repouso. Desligue quando não precisar.
 - Os avisos aparecem dentro da página (o Safari só deixa site mandar notificação com HTTPS).

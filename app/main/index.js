@@ -14,6 +14,7 @@ const { Morning } = require('./morning');
 const { EngineWatch, launchSpec } = require('./engines');
 const { Remote } = require('./remote');
 const { ClaudeHooks } = require('./hooks');
+const { Activity } = require('./activity');
 const { AskBroker } = require('./asks');
 const { AiTools, IDS: AI_IDS, firstProjectDir } = require('./ai-tools');
 const files = require('./files');
@@ -49,6 +50,7 @@ if (process.env.BANCADA_DATA_DIR) app.setPath('userData', path.join(process.env.
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
 let ai, store, ptys, reader, summarizer, morning, engines, remote, hooks, asks, mainWin, captureWin, tray;
+let activity = null;
 const initialPrompts = new Map();   // terminal -> 1ª mensagem do Claude (entrevista guiada); usada uma vez
 const PLUGIN_DIR_NAME = 'plugin';
 let focusedTerm = null;          // terminal que o usuário está olhando no Mac (para não avisar dele)
@@ -141,6 +143,7 @@ function onClaudeState(e) {
     if (ctx) { payload.ctx = ctx; const s = hooks.get(e.id); if (s) s.ctx = ctx; }
   }
   send('claude:state', payload);
+  if (activity) activity.setTerm(e.id, { transcript: e.transcript, state: e.state });
   const watching = mainWin && !mainWin.isDestroyed() && mainWin.isVisible() && mainWin.isFocused() && focusedTerm === e.id;
   if (watching || !Notification.isSupported() || !row) return;
   if (e.state === 'waiting' || (e.state === 'done' && e.workedMs >= NOTIFY_DONE_MIN_MS)) {
@@ -384,6 +387,7 @@ function registerIpc() {
   handle('ui:layoutGet', () => store.kvGet('pane_tree', null));
   handle('ui:layoutSet', (tree) => { store.kvSet('pane_tree', v.paneTree(tree)); return true; });
   handle('terminals:byIds', (ids) => v.idList(ids, 8).map(id => store.getTerminal(id)).filter(Boolean));
+  handle('activity:list', () => (activity ? activity.list() : {}));
   handle('claude:seen', (id) => { hooks.seen(v.id(id)); return true; });
   handle('ui:focusTerm', (id) => { focusedTerm = id ? v.id(id) : null; if (focusedTerm) hooks.seen(focusedTerm); return true; });
   handle('pty:paste', (id, text) => ptys.paste(v.id(id), v.text(text, 64 * 1024)));
@@ -525,6 +529,7 @@ app.whenReady().then(() => {
   fs.mkdirSync(ANEXOS_DIR, { recursive: true, mode: 0o700 });
   hooks = new ClaudeHooks({ dir: path.join(USER_DIR, 'hooks'), onState: onClaudeState });
   hooks.setup(); hooks.start();
+  activity = new Activity({ statsFile: path.join(USER_DIR, 'hooks', 'duracoes.json'), onChange: (x) => send('activity:changed', x) }).start();
   copyPlugin(path.join(__dirname, '..', 'plugin'), path.join(USER_DIR, PLUGIN_DIR_NAME));
   try { attachments.cleanup(ANEXOS_DIR); } catch {}
   // BANCADA_AI_HOME: só para teste (instalar numa pasta isolada sem tocar no ~ de verdade)
@@ -572,6 +577,7 @@ app.on('will-quit', () => {
   if (morning) morning.stop();
   if (engines) engines.stop();
   if (hooks) hooks.stop();
+  if (activity) activity.stop();
   if (asks) asks.stop();
   if (remote) remote.stop();
   if (store) store.close();

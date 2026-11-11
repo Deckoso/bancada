@@ -30,7 +30,7 @@ const isLoginTerm = (m) => /^pty:/.test(m.ch) && m.args && (/^ai-login-/.test(St
 // Arquivos que a página remota pode baixar (lista fechada; nada de caminho vindo do cliente)
 const STATIC = {
   '/': 'index.html', '/index.html': 'index.html', '/styles.css': 'styles.css', '/dom.js': 'dom.js', '/dnd.js': 'dnd.js',
-  '/terminals.js': 'terminals.js', '/layout.js': 'layout.js', '/files-panel.js': 'files-panel.js', '/asks-ui.js': 'asks-ui.js', '/app.js': 'app.js', '/remote-bridge.js': 'remote-bridge.js', '/mobile.css': 'mobile.css',
+  '/terminals.js': 'terminals.js', '/layout.js': 'layout.js', '/files-panel.js': 'files-panel.js', '/asks-ui.js': 'asks-ui.js', '/activity-ui.js': 'activity-ui.js', '/app.js': 'app.js', '/remote-bridge.js': 'remote-bridge.js', '/mobile.css': 'mobile.css',
   '/vendor/xterm.js': 'vendor/xterm.js', '/vendor/xterm.css': 'vendor/xterm.css', '/vendor/addon-fit.js': 'vendor/addon-fit.js',
   '/vendor/addon-web-links.js': 'vendor/addon-web-links.js', '/vendor/addon-unicode11.js': 'vendor/addon-unicode11.js', '/vendor/aurora-tokens.css': 'vendor/aurora-tokens.css',
   '/assets/bancada-logo-128.png': 'assets/bancada-logo-128.png', '/apple-touch-icon.png': 'assets/bancada-logo-128.png',

@@ -54,6 +54,8 @@
     bindChrome();
     bindLive();
     window.AskUI.init({ goTerm: (pid, tid) => goTerminal(pid, tid) });
+    if (window.ActivityUI) window.ActivityUI.init({ goTerm: (pid, tid) => goTerminal(pid, tid), terms: officeTerms, termInfo: (id) => { const m = meta(id); return m && m.p ? { projectId: m.p.id } : null; },
+      openOffice: () => { S.panelTab = 'office'; save('bancada.panelTab', 'office'); renderPanel(); document.body.classList.add('m-panel-open'); } });
     await loadLive();
     await restoreTree().catch(() => {});
     B.onDataChanged(async (ev) => {
@@ -342,6 +344,7 @@
       if (old) old.replaceWith(paneHead(id));
       el.classList.toggle('focus', id === S.focusTerm);
     }
+    if (window.ActivityUI) window.ActivityUI.paintStrips();
   }
 
   let paneSeq = 0;
@@ -647,12 +650,35 @@
         if (window.__REMOTE) B.claude.seen(e.id).catch(() => {}); else B.ui.focusTerm(e.id).catch(() => {});
       }
       renderTabs(); renderSide(); paintPaneHeads(); paintTitle();
+      if (window.ActivityUI) window.ActivityUI.Office.sync();
       if (e.state === 'done' && e.projectId === S.activeId && window.FilesPanel && S.panelTab !== 'project') window.FilesPanel.refresh();
       if (window.__REMOTE) remoteNotice(e);
     });
     B.pty.onUrl((e) => { const list = S.urls[e.id] = S.urls[e.id] || []; if (!list.some(u => u.port === e.port)) list.push(e); paintPaneHeads(); toast(`Servidor local no ar: ${e.url}${window.__REMOTE ? '' : ' (▶ no painel abre a prévia)'}`); });
     B.ui.onGoTerminal((e) => goTerminal(e.projectId, e.id));
   }
+  // terminais que aparecem no Escritório: os de IA (ou com estado de Claude) deste projeto ou dos projetos em foco
+  const officeLoading = new Set();
+  function officeTerms(scope) {
+    const pids = scope === 'all' ? [...focusProjects().map(p => p.id), ...Object.keys(S.layout)] : [S.activeId];
+    const out = []; const seen = new Set();
+    for (const pid of pids) {
+      if (seen.has(pid)) continue; seen.add(pid);
+      const p = proj(pid); if (!p) continue;
+      // projeto em foco que ainda não foi aberto: busca os terminais salvos (sem criar nenhum) e redesenha a sala
+      if (!S.layout[pid] && !officeLoading.has(pid)) {
+        officeLoading.add(pid);
+        B.terminals.list(pid).then((l) => { if (!S.layout[pid] && l && l.length) S.layout[pid] = l; if (window.ActivityUI) window.ActivityUI.Office.sync(); }).catch(() => {});   // uma vez por projeto: sem isso, projeto sem terminal buscaria em laço
+      }
+      for (const t of S.layout[pid] || []) {
+        const st = S.cst[t.id] && S.cst[t.id].state;
+        if (!st && !/^bancada:/.test(t.startup || '')) continue;
+        out.push({ id: t.id, name: t.name, projectId: p.id, projectName: shortName(p.name), state: st && st !== 'off' ? st : null });
+      }
+    }
+    return out.slice(0, 16);
+  }
+
   async function goTerminal(projectId, termId) {
     const p = proj(projectId); if (!p) return;
     await ensureLayout(p);
@@ -683,9 +709,17 @@
     if (!p) return;
     // abas do painel: Projeto (cartões) · Arquivos · Mudanças (E2)
     const seg = h('div', { class: 'panel-seg' });
-    const tabsDef = [['project', 'Projeto'], ['files', 'Arquivos'], ['changes', 'Mudanças']];
+    const tabsDef = [['project', 'Projeto'], ['files', 'Arquivos'], ['changes', 'Mudanças'], ['office', 'Escritório']];
     for (const [k, l] of tabsDef) seg.appendChild(h('button', { class: `seg-btn ${S.panelTab === k ? 'on' : ''}`, dataset: { k }, onclick: () => { S.panelTab = k; save('bancada.panelTab', k); renderPanel(); } }, l));
     panel.appendChild(seg);
+    if (S.panelTab === 'office' && window.ActivityUI) {
+      if (window.FilesPanel) window.FilesPanel.stop();
+      const host = h('div', { class: 'office-host' });
+      panel.appendChild(host);
+      window.ActivityUI.Office.mount(host);
+      return;
+    }
+    if (window.ActivityUI) window.ActivityUI.Office.unmount();
     if (S.panelTab === 'files' || S.panelTab === 'changes') {
       const host = h('div', { class: 'fp' });
       panel.appendChild(host);
