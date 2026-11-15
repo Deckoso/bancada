@@ -13,7 +13,7 @@ uma decisão, você responde por botões, no Mac ou no celular.
 ![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011%20x64-0078d4?logo=windows)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.0-7c5cff)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.1-7c5cff)
 
 <img src="docs/img/principal.png" width="860" alt="Bancada: projetos em foco, dois terminais lado a lado, cartões esperando resposta e o painel do projeto">
 

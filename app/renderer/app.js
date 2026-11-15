@@ -516,7 +516,7 @@
       tabs.appendChild(h('button', { class: 'tab add claude skip', title: `Novo Claude ${where} com --dangerously-skip-permissions (não pede confirmação de nada)`, onclick: () => quickClaude(true) }, '+ ⚡ sem permissões'));
     }
     tabs.appendChild(h('button', { class: 'tab add', title: `Novo terminal (${K.t})`, onclick: () => newTerminalModal() }, '+'));
-    if (!window.__REMOTE) tabs.appendChild(h('button', { class: 'tab add split-btn', title: `Dividir a tela: abrir outro terminal ao lado (${K.split}). Também dá para arrastar uma aba para a borda do painel.', onclick: () => splitMenu() }, '◫ Dividir'));
+    if (!window.__REMOTE) tabs.appendChild(h('button', { class: 'tab add split-btn', title: `Dividir a tela: abrir outro terminal ao lado (${K.split}). Também dá para arrastar uma aba para a borda do painel.`, onclick: () => splitMenu() }, '◫ Dividir'));
   }
   function shortName(n) { return n.length > 14 ? n.slice(0, 13) + '…' : n; }
 
@@ -1120,7 +1120,7 @@
       const aliases = h('input', { class: 'aurora-input', value: (p.aliases || []).join(', '), placeholder: 'outros nomes: meuapp, meu app' });
       const eng = engineSelect(p.engine_id);
       c.append(h('h2', { text: p.name }), field('Nome', name), field('Tipo', kind), field('Motor (onde o Claude deste projeto roda)', eng),
-        field('Pastas do projeto (uma por linha)', paths), field('Apelidos (ajudam a achar as sessões e o #tag do ${K.note})`, aliases),
+        field('Pastas do projeto (uma por linha)', paths), field(`Apelidos (ajudam a achar as sessões e o #tag do ${K.note})`, aliases),
         h('div', { class: 'row between' },
           h('button', { class: 'aurora-btn aurora-btn--text danger', onclick: async () => { if (!confirm(`Apagar ${p.name}? As notas somem da lista.`)) return; await B.projects.update(p.id, { deleted: true }); close(); await loadProjects(); go(focusProjects()[0] ? 'project' : 'today', focusProjects()[0] && focusProjects()[0].id); } }, 'Apagar projeto'),
           h('div', { class: 'row' }, h('button', { class: 'aurora-btn aurora-btn--text', onclick: close }, 'Cancelar'),
