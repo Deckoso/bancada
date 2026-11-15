@@ -7,7 +7,7 @@ APP="/Applications/Bancada.app"
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
 if pgrep -f "Bancada.app/Contents/MacOS/Bancada" >/dev/null; then
-  echo "A Bancada está aberta. Feche (Bancada → Sair) e rode de novo."; exit 1
+  echo "A Bancada está aberta. Use: npm run update-app (monta agora e troca sozinha quando você sair da Bancada)."; exit 1
 fi
 node scripts/vendor.js >/dev/null
 rm -rf dist dist-next

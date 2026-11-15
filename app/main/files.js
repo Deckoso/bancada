@@ -1,6 +1,9 @@
 // Aba Arquivos (BP-2026-11-05-001 E2): árvore do projeto, só leitura. Guarda D7: todo caminho pedido precisa ficar
 // DENTRO da pasta do projeto depois de resolver links simbólicos (vale para o Mac e para o celular).
 'use strict';
+// Segurança: um .git/config de repositório baixado pode mandar o git rodar programa (core.fsmonitor) num simples
+// status; a Bancada roda git sozinha em toda pasta de projeto. Esses -c valem mais que o config do repositório.
+const SAFE_GIT = ['-c', 'core.fsmonitor=false'];   // diff já vai com --no-ext-diff --no-textconv
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -17,6 +20,8 @@ function denied(msg = 'caminho fora do projeto') { const e = new Error(msg); e.c
 function resolveInside(root, rel) {
   if (typeof rel !== 'string' || rel.length > 2048 || rel.includes('\0')) throw denied('caminho inválido');
   if (path.isAbsolute(rel)) throw denied();
+  // Windows: 'C:x' (relativo ao disco) e nomes de dispositivo (CON, NUL, COM1…: ler um deles trava esperando o console)
+  if (process.platform === 'win32' && (/^[A-Za-z]:/.test(rel) || /(^|[\\/])(con|prn|aux|nul|com\d|lpt\d)(\.[^\\/]*)?([\\/]|$)/i.test(rel))) throw denied();
   let realRoot; try { realRoot = fs.realpathSync(root); } catch { throw denied('pasta do projeto não existe'); }
   const full = path.resolve(realRoot, rel);
   const inside = (p) => p === realRoot || p.startsWith(realRoot + path.sep);
@@ -28,7 +33,7 @@ function resolveInside(root, rel) {
 
 function git(root, args, { maxBuffer = 8 * 1024 * 1024, timeout = 6000 } = {}) {
   return new Promise((resolve) => {
-    execFile('git', ['-C', root, ...args], { timeout, maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } },
+    execFile('git', [...SAFE_GIT, '-C', root, ...args], { timeout, maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } },
       (err, stdout) => resolve(err ? null : stdout));
   });
 }
@@ -49,7 +54,8 @@ async function gitFiles(root) {
 // filhos imediatos de `rel` (pastas primeiro). { entries: [{name, rel, dir}], truncated, git }
 async function list(root, rel = '') {
   const dirAbs = resolveInside(root, rel);
-  const relNorm = path.relative(fs.realpathSync(root), dirAbs);
+  // sempre com '/', como o git lista (no Windows o path.relative devolve '\\')
+  const relNorm = path.relative(fs.realpathSync(root), dirAbs).split(path.sep).join('/');
   const files = await gitFiles(root);
   const seen = new Map();
   if (files) {

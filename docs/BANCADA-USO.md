@@ -126,13 +126,40 @@ Quando o Claude está trabalhando, uma faixa aparece no topo do painel do termin
 
 Clicar na faixa abre o **Escritório**.
 
+### Clicar no que o Claude escreve (v0.6)
+No terminal, o que o Claude escreve vira link (sublinha ao passar o mouse):
+- **caminho de pasta** abre a pasta no Finder;
+- **arquivo `.md`** abre na prévia da Bancada já formatado (títulos, listas, tabelas, código), a mesma janela da aba Arquivos. Os links dentro dele também funcionam: outro `.md` abre na prévia, e **← Voltar** retorna ao anterior;
+- **outro arquivo** é mostrado no Finder. `arquivo.js:42` também vira link;
+- **link da web** (`https://…`) abre no **Safari**.
+
+Funciona com espaço no nome da pasta e com caminho quebrado em várias linhas. O caminho pode ser absoluto, `~/…` ou relativo à pasta do terminal ou do projeto. Só vira link o que existe de verdade no disco. Nenhum caminho é executado, e o `.md` nunca roda HTML nem script. No celular, o link da web abre no próprio aparelho, e pasta ou Finder só funcionam no Mac.
+
 ### Escritório
-Aba **Escritório** no painel lateral (⤢ abre em tela grande): uma sala onde cada Claude é um personagem.
-- **trabalhando**: na mesa, monitor aceso, balão com a ferramenta e o tempo;
-- **esperando você**: em pé, balão âmbar "! esperando você";
-- **tarefa em segundo plano**: na máquina, com barra de andamento;
-- **agentes** entram pela porta, sentam numa mesa livre e saem quando terminam;
-- sem nada acontecendo, todos no sofá.
+Aba **Escritório** no painel lateral. O botão **⤢ Tela cheia** abre a sala ocupando a janela inteira (**Esc** fecha). Desde a v0.6 é uma **maquete 3D**: arraste para girar, role (ou faça pinça) para aproximar, **⟲** volta à vista inicial.
+- **Bonecos:** cada Claude tem um crachá na cor do terminal, e os agentes que ele chama são um pouco menores. Cada boneco anima o que está fazendo: **digita** (Edit/Write), **lê** (Read/Grep), **pesquisa** (WebSearch), **gira a cadeira** (Bash rodando). O monitor da mesa mostra o verbo e o arquivo.
+- **Esperando você:** o boneco **levanta a mão** ao lado da mesa e ganha um aro e um balão âmbar.
+- **Agentes:** entram pela porta e sentam na **sala de reunião de vidro**. A tela de lá conta quantos estão trabalhando. Quando terminam, saem pela porta.
+- **Tarefa em segundo plano:** o boneco fica em pé no quiosque, que mostra a barra de andamento.
+- **Parado:** no sofá do lounge. De vez em quando ele vai buscar um café.
+- **Sem sinal:** fica cinza, de cabeça baixa.
+- **Na parede:** o quadro com as **pendências do projeto** (clique leva ao painel Projeto) e um relógio com a hora real. A luz da sala acompanha a hora do dia.
+
+**Sala de servidores** (v0.6): um rack de vidro por servidor, com luzes:
+- 🟢 **no ar**: respondeu em menos de 0,8 s;
+- 🟡 **lento**: respondeu, mas demorou ou deu erro HTTP;
+- 🔴 **sem resposta**: pisca;
+- ⚪ **fora de alcance**: o endereço é de outra rede, por exemplo o IP da rede do escritório estando em casa, ou o Tailscale desligado.
+
+Clique num rack para ver a ficha: endereço, tipo de consulta, tempo de resposta e as últimas 30 consultas. A consulta só sai do Mac, a cada 60 s (a cada 5 min com a janela escondida). É uma pergunta simples, "está de pé?": HTTP, abertura de conexão TCP fechada na hora, ou ping. **Sem login, sem senha, nenhuma porta aberta, nada instalado nos servidores.** O celular só vê o resultado.
+
+A lista fica em `<dados>/servidores.json`. Abra pelo botão **Editar lista** na ficha. Formato:
+```json
+{ "servidores": [ { "id": "nas", "nome": "NAS de casa", "checks": [ { "alvo": "tcp:nas.local:22", "nome": "SSH" }, { "alvo": "http://nas.local:8080/", "nome": "painel" } ] } ] }
+```
+O `alvo` aceita só `http://…`/`https://…` (sem usuário:senha), `tcp:host:porta` e `ping:host`. Até 12 servidores e 6 luzes cada. Um rack sem `checks` aparece como "configurar".
+
+Sem WebGL, a sala volta ao desenho 2D da v0.5. Para forçar o 2D, rode `localStorage.setItem('bancada.office2d','1')` no console.
 
 Clicar num personagem leva ao terminal dele. **Este projeto / Todos** troca o que aparece na sala.
 

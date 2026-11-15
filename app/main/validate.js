@@ -18,7 +18,8 @@ function optText(x, max) { return x == null ? null : text(x, max); }
 function date(x) { if (typeof x !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(x)) throw bad('data inválida'); return x; }
 function dir(x) {
   text(x, 1024);
-  if (!x.startsWith('/')) throw bad('caminho precisa ser absoluto');
+  if (!require('path').isAbsolute(x)) throw bad('caminho precisa ser absoluto');
+  if (require('./platform').isNetworkPath(x)) throw bad('pasta de rede não é aceita (use uma pasta do disco)');   // Mac: /…  ·  Windows: C:\\…
   try { if (!fs.statSync(x).isDirectory()) throw 0; } catch { throw bad('pasta não existe'); }
   return x;
 }

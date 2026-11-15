@@ -68,6 +68,7 @@
   const on = (ch) => (fn) => { (subs[ch] = subs[ch] || new Set()).add(fn); return () => subs[ch].delete(fn); };
 
   window.bancada = {
+    platform: (document.currentScript && document.currentScript.dataset.host) || 'darwin',   // sistema do computador
     projects: { list: call('projects:list'), create: call('projects:create'), update: call('projects:update'), swapFocus: call('projects:swapFocus'),
       discover: call('projects:discover'), git: call('projects:git'), setActive: call('projects:setActive'), reorder: call('projects:reorder') },
     items: { list: call('items:list'), create: call('items:create'), update: call('items:update'), remove: call('items:delete'), today: call('items:today'), reorder: call('items:reorder') },
@@ -85,6 +86,9 @@
     remote: null,
     asks: { list: call('asks:list'), answer: call('asks:answer'), dismiss: call('asks:dismiss'), onChanged: on('asks:changed') },
   activity: { list: call('activity:list'), onChanged: on('activity:changed') },
+    // a consulta aos servidores acontece só no Mac: o celular só lê o resultado
+    links: { resolve: call('links:resolve'), readMd: call('links:readMd'), openDir: null, reveal: null, openUrl: async (u) => { window.open(u, '_blank', 'noopener'); return true; } },
+    servers: { list: call('servers:list'), refresh: async () => true, edit: null, onChanged: on('servers:changed') },
   claude: { states: call('claude:states'), seen: call('claude:seen'), context: call('claude:context'), onState: on('claude:state') },
     // o layout dos painéis é do Mac: o celular mostra 1 painel e não grava nada
     ui: { focusTerm: async () => true, onGoTerminal: on('ui:goTerminal'), layoutGet: async () => null, layoutSet: async () => true },

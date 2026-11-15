@@ -1,7 +1,7 @@
 {
   "name": "bancada",
   "productName": "Bancada",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "description": "Bancada — terminais por projeto, onde parei e captura rápida (evolução do PromptPad)",
   "author": "Deckoso",
   "repository": {
@@ -21,7 +21,9 @@
     "predist": "node scripts/vendor.js",
     "dist": "electron-builder --mac dir --arm64",
     "install-app": "zsh scripts/install.sh",
-    "share": "zsh scripts/share.sh"
+    "update-app": "zsh scripts/update.sh",
+    "share": "zsh scripts/share.sh",
+    "dist:win": "node scripts/build-win.js"
   },
   "build": {
     "appId": "com.mcpp.bancada",
@@ -54,6 +56,49 @@
     "npmRebuild": false,
     "directories": {
       "buildResources": "build"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "files": [
+        "app/**",
+        "node_modules/**",
+        "package.json",
+        "!node_modules/.cache/**",
+        "!**/*.md",
+        "!test/**",
+        "app/plugin/**/*",
+        "!node_modules/node-pty/build/**",
+        "!node_modules/node-pty/prebuilds/darwin-*/**",
+        "!node_modules/node-pty/prebuilds/win32-arm64/**",
+        "!node_modules/node-pty/third_party/conpty/*/win10-arm64/**",
+        "!node_modules/better-sqlite3/prebuilds/darwin-*",
+        "!node_modules/better-sqlite3/prebuilds/linux*",
+        "!node_modules/better-sqlite3/prebuilds/win32-arm64.node"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "artifactName": "Bancada-Setup-${version}-windows-x64.${ext}",
+      "shortcutName": "Bancada",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "electronFuses": {
+      "runAsNode": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false
     }
   },
   "dependencies": {
@@ -65,11 +110,12 @@
     "better-sqlite3": "^13.0.3",
     "node-pty": "^1.1.0",
     "qrcode": "^1.5.4",
+    "three": "0.187.0",
     "ws": "^8.22.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.1",
-    "electron": "^45.2.3",
+    "electron": "^45.3.2",
     "electron-builder": "^26.18.0"
   }
 }

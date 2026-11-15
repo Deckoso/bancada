@@ -102,7 +102,7 @@ test('tailscaleIp só aceita a faixa 100.64.0.0/10', () => {
 
 test('v0.2: no celular ficam bloqueados Finder, Cursor, área de transferência do Mac, prévia de localhost, layout e foco', () => {
   const { BLOCKED } = require('../../app/main/remote');
-  for (const ch of ['files:reveal', 'files:openInCursor', 'attach:clipboard', 'preview:open', 'ui:layoutSet', 'ui:focusTerm']) assert.ok(BLOCKED.has(ch), ch);
+  for (const ch of ['files:reveal', 'files:openInCursor', 'attach:clipboard', 'preview:open', 'ui:layoutSet', 'ui:focusTerm', 'servers:refresh', 'servers:edit', 'links:openDir', 'links:reveal', 'links:openUrl']) assert.ok(BLOCKED.has(ch), ch);
   for (const ch of ['files:list', 'files:read', 'git:status', 'git:diff', 'attach:image', 'claude:states']) assert.ok(!BLOCKED.has(ch), ch);
 });
 

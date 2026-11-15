@@ -19,25 +19,26 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const plat = require('./platform');
 
 const TOOLS = {
   claude: {
     id: 'claude', name: 'Claude', vendor: 'Anthropic', bin: 'claude',
-    installUrl: 'https://claude.ai/install.sh',
+    installUrl: 'https://claude.ai/install.sh', installUrlWin: 'https://claude.ai/install.ps1',
     plan: 'Precisa de uma assinatura Claude Pro ou Max (claude.ai).',
     loginArgs: ['auth', 'login'], updateArgs: ['update'],
     loginHint: 'O navegador vai abrir na página da Anthropic. Entre na sua conta e autorize. Se pedir um código, copie e cole aqui com ⌘V e aperte Enter.',
   },
   codex: {
     id: 'codex', name: 'Codex', vendor: 'OpenAI (ChatGPT)', bin: 'codex',
-    installUrl: 'https://chatgpt.com/codex/install.sh',
+    installUrl: 'https://chatgpt.com/codex/install.sh', installUrlWin: 'https://chatgpt.com/codex/install.ps1',
     plan: 'Precisa de um plano do ChatGPT que inclua o Codex (Plus, Pro, Business…).',
     loginArgs: ['login'], updateArgs: ['update'],
     loginHint: 'O navegador vai abrir na página do ChatGPT. Entre na sua conta e autorize. Quando aparecer "Signed in", pode fechar.',
   },
   google: {
     id: 'google', name: 'Google (Antigravity)', vendor: 'Google', bin: 'agy',
-    installUrl: 'https://antigravity.google/cli/install.sh',
+    installUrl: 'https://antigravity.google/cli/install.sh', installUrlWin: 'https://antigravity.google/cli/install.ps1',
     plan: 'Precisa de uma conta Google. O antigo Gemini CLI foi aposentado para contas pessoais em 18/06/2026; o Antigravity CLI (agy) é o substituto oficial.',
     loginArgs: [], updateArgs: ['update'],
     loginHint: 'O navegador vai abrir na página do Google. Entre na sua conta e autorize. A página mostra um código: copie, volte aqui, cole com ⌘V e aperte Enter. Quando a IA abrir, já está conectado e pode fechar.',
@@ -100,15 +101,37 @@ function fixShellText(text, home = os.homedir()) {
   return { text: res, changed: added || removed > 0, added, removed };
 }
 
+// Git Bash (Git para Windows) instalado?
+function gitBashPath() {
+  const c = [process.env.ProgramFiles && path.win32.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe'),
+    process.env.LOCALAPPDATA && path.win32.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')].filter(Boolean);
+  return c.find(f => { try { return fs.statSync(f).isFile(); } catch { return false; } }) || null;
+}
+
+// o instalador baixado tem cara de instalador? (tamanho razoável; .sh começa com #!; .ps1 não é página HTML nem binário)
+function installerLooksOk(body, size, win) {
+  if (!(size >= 200 && size <= 512 * 1024)) return false;
+  if (!win) return body.slice(0, 2) === '#!';
+  const head = body.replace(/^\ufeff/, '').trimStart().slice(0, 200);
+  return !/^</.test(head) && !body.includes('\u0000');
+}
+
 class AiTools {
-  constructor({ home = os.homedir(), onLog = () => {}, basePath = process.env.PATH || '' } = {}) {
-    this.home = home; this.onLog = onLog; this.basePath = basePath;
+  constructor({ home = os.homedir(), onLog = () => {}, basePath = plat.getPath(process.env), win = plat.IS_WIN } = {}) {
+    this.home = home; this.onLog = onLog; this.basePath = basePath; this.win = win;
     this.localBin = path.join(home, '.local', 'bin');
     this.job = null;      // { tool, kind, proc, log, started }
   }
 
   // PATH para tudo que a Bancada roda: ~/.local/bin e os do Homebrew na frente, sem repetir
   envPath(base = this.basePath) {
+    if (this.win) {
+      // Windows: só a pasta do instalador oficial na frente; o resto é o PATH do usuário/sistema como veio
+      const rest = String(base || '').split(';').filter(Boolean);
+      const seen = new Set(); const out = [];
+      for (const d of [this.localBin, ...rest]) { const k = d.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(d); } }
+      return out.join(';');
+    }
     const want = [this.localBin, '/opt/homebrew/bin', '/usr/local/bin'];
     const rest = String(base || '').split(':').filter(Boolean);
     const sys = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
@@ -116,7 +139,8 @@ class AiTools {
     return [...new Set(all)].join(':');
   }
   env(extra = {}) {
-    const env = { ...process.env, HOME: this.home, PATH: this.envPath(), ...extra };
+    const env = { ...process.env, HOME: this.home, ...extra };
+    plat.setPath(env, this.envPath(), this.win);
     delete env.ELECTRON_RUN_AS_NODE;
     for (const k of Object.keys(env)) if (k === 'CLAUDECODE' || k.startsWith('CLAUDE_CODE_')) delete env[k];
     return env;
@@ -125,9 +149,7 @@ class AiTools {
   tool(id) { const t = TOOLS[id]; if (!t) { const e = new Error('IA desconhecida'); e.code = 'INVALID'; throw e; } return t; }
 
   candidates(id) {
-    const b = this.tool(id).bin;
-    return [path.join(this.localBin, b), `/opt/homebrew/bin/${b}`, `/usr/local/bin/${b}`,
-      path.join(this.home, '.npm-global', 'bin', b), path.join(this.home, '.bun', 'bin', b)];
+    return plat.aiCandidates(this.tool(id).bin, this.home, this.win);
   }
   // todas as cópias instaladas (para avisar de conflito); a primeira é a usada (a oficial em ~/.local/bin vence)
   findAll(id) {
@@ -150,7 +172,7 @@ class AiTools {
     return new Promise((resolve) => {
       let out = ''; let done = false;
       let p;
-      try { p = spawn(bin, args, { cwd, env: this.env(), stdio: ['ignore', 'pipe', 'pipe'] }); }
+      try { p = spawn(bin, args, { cwd, env: this.env(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); }
       catch (e) { resolve({ code: -1, out: String(e.message) }); return; }
       const fin = (code) => { if (done) return; done = true; clearTimeout(timer); resolve({ code, out }); };
       const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} fin(-2); }, timeout);
@@ -167,6 +189,11 @@ class AiTools {
     const res = { id, name: t.name, vendor: t.vendor, plan: t.plan, loginHint: t.loginHint, installed: !!bin, path: bin, via: this.via(bin),
       copies: all.map(p => ({ path: p, via: this.via(p) })), version: null, connected: null, account: null, accountPlan: null,
       busy: !!(this.job && this.job.tool === id), job: this.job && this.job.tool === id ? this.job.kind : null };
+    if (this.win) {
+      res.loginHint = String(res.loginHint).replace(/⌘V/g, 'Ctrl+V');
+      // sem o Git para Windows o Claude roda os comandos pelo PowerShell: funciona, mas o Bash dele fica de fora
+      if (id === 'claude' && !gitBashPath()) res.note = 'Recomendado: instale também o Git para Windows (git-scm.com). Com ele o Claude roda os comandos como no Mac e as abas Arquivos e Mudanças mostram o git.';
+    }
     if (!bin) return res;
     const v = await this.run(bin, ['--version'], { timeout: 15000 });
     res.version = parseVersion(v.out);
@@ -199,7 +226,7 @@ class AiTools {
 
   spawnJob(bin, args, opts = {}) {
     return new Promise((resolve) => {
-      const p = spawn(bin, args, { cwd: this.home, env: this.env(opts.env), stdio: ['ignore', 'pipe', 'pipe'] });
+      const p = spawn(bin, args, { cwd: this.home, env: this.env(opts.env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       this.job.proc = p;
       const timer = setTimeout(() => { this.log('\n[tempo esgotado: 10 min]\n'); try { p.kill('SIGKILL'); } catch {} }, JOB_TIMEOUT);
       p.stdout.on('data', d => this.log(d.toString('utf8')));
@@ -213,19 +240,23 @@ class AiTools {
     const t = this.tool(id);
     this.startJob(id, 'install');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bancada-instalar-'));
-    const file = path.join(tmp, 'install.sh');
+    const url = this.win ? t.installUrlWin : t.installUrl;
+    const file = path.join(tmp, this.win ? 'install.ps1' : 'install.sh');
     try {
-      this.log(`Baixando o instalador oficial de ${t.vendor}:\n  ${t.installUrl}\n`);
-      const c = await this.spawnJob('/usr/bin/curl', ['-fsSL', '--proto', '=https', '--tlsv1.2', '--max-time', '120', '-o', file, t.installUrl]);
+      this.log(`Baixando o instalador oficial de ${t.vendor}:\n  ${url}\n`);
+      const curl = this.win ? plat.sys32('curl.exe') : '/usr/bin/curl';
+      const c = await this.spawnJob(curl, ['-fsSL', '--proto', '=https', '--tlsv1.2', '--max-time', '120', '-o', file, url]);
       if (this.job.cancelled) throw new Error('cancelado');
       if (c !== 0) throw new Error('não consegui baixar o instalador (sem internet?)');
-      const st = fs.statSync(file); const head = fs.readFileSync(file, 'utf8').slice(0, 2);
-      if (head !== '#!' || st.size < 200 || st.size > 512 * 1024) throw new Error('o arquivo baixado não parece um instalador; parei por segurança');
-      this.log(`Instalador conferido (${Math.round(st.size / 1024)} KB). Rodando, sem pedir a senha do Mac…\n\n`);
-      const code = await this.spawnJob('/bin/bash', [file], { env: { TERM: 'dumb', NO_COLOR: '1' } });
+      const st = fs.statSync(file); const body = fs.readFileSync(file, 'utf8');
+      if (!installerLooksOk(body, st.size, this.win)) throw new Error('o arquivo baixado não parece um instalador; parei por segurança');
+      this.log(`Instalador conferido (${Math.round(st.size / 1024)} KB). Rodando, sem pedir a senha do ${plat.MACHINE}…\n\n`);
+      const code = this.win
+        ? await this.spawnJob(plat.powershellExe(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], { env: { TERM: 'dumb', NO_COLOR: '1' } })
+        : await this.spawnJob('/bin/bash', [file], { env: { TERM: 'dumb', NO_COLOR: '1' } });
       if (this.job.cancelled) throw new Error('cancelado');
       const bin = this.find(id);
-      if (!bin) throw new Error(`o instalador terminou (código ${code}), mas ${t.bin} não apareceu em ~/.local/bin`);
+      if (!bin) throw new Error(`o instalador terminou (código ${code}), mas ${t.bin} não apareceu onde ${t.name} costuma ficar`);
       const v = parseVersion((await this.run(bin, ['--version'], { timeout: 15000 })).out);
       this.log(`\n✓ ${t.name} instalado${v ? ` (versão ${v})` : ''} em ${bin.replace(this.home, '~')}\n`);
       return { ok: true, path: bin, version: v, log: this.job.log };
@@ -252,20 +283,29 @@ class AiTools {
     } finally { this.job = null; }
   }
 
-  cancel() { if (this.job && this.job.proc) { this.job.cancelled = true; try { this.job.proc.kill('SIGTERM'); } catch {} return true; } return false; }
+  cancel() {
+    if (!(this.job && this.job.proc)) return false;
+    this.job.cancelled = true;
+    const pid = this.job.proc.pid;
+    // Windows: o PowerShell do instalador abre outros processos; mata a árvore inteira
+    if (this.win && pid) { try { spawn(plat.sys32('taskkill.exe'), ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch {} }
+    else { try { this.job.proc.kill('SIGTERM'); } catch {} }
+    return true;
+  }
 
   // comando do login (o processo principal decide; a página só escolhe a IA)
   loginExec(id) {
     const t = this.tool(id); const bin = this.find(id);
     if (!bin) { const e = new Error(`${t.name} não está instalado. Clique em Instalar primeiro.`); e.code = 'INVALID'; throw e; }
-    const q = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
-    return [q(bin), ...t.loginArgs.map(q)].join(' ');
+    return plat.renderCommand({ tokens: [bin, ...t.loginArgs].map(v => ({ v, quote: true })) }, this.win);
   }
   binFor(id) { return this.find(id); }
 
   // ---------- Terminal do Mac (~/.zshrc) ----------
   rcFile() { return path.join(this.home, '.zshrc'); }
   async shellCheck() {
+    // Windows: não há ~/.zshrc; os terminais da Bancada já acham as IAs pelo PATH que ela injeta
+    if (this.win) return { na: true, ok: true };
     let text = ''; try { text = fs.readFileSync(this.rcFile(), 'utf8'); } catch {}
     const mine = path.join(this.home, '.local', 'bin');
     const lines = text.split('\n').filter(l => pathLineDir(l, this.home) === mine);
@@ -276,6 +316,7 @@ class AiTools {
       terminal_finds: shellPath ? shellPath.includes(this.localBin) : null, ok: lines.length === 1 && (!shellPath || shellPath.includes(this.localBin)) };
   }
   fixShell() {
+    if (this.win) return { changed: false, backup: null, added: false, removed: 0 };
     const rc = this.rcFile();
     let text = ''; let mode = 0o644; let exists = false;
     try { text = fs.readFileSync(rc, 'utf8'); mode = fs.statSync(rc).mode & 0o777; exists = true; } catch {}
@@ -293,8 +334,8 @@ class AiTools {
 }
 
 // pasta do primeiro projeto de quem nunca programou (onboarding leigo)
-function firstProjectDir(home = os.homedir()) {
-  const dir = path.join(home, 'Documents', 'Bancada', 'Meu primeiro projeto');
+function firstProjectDir(home = os.homedir(), docs = path.join(home, 'Documents')) {
+  const dir = path.join(docs, 'Bancada', 'Meu primeiro projeto');
   fs.mkdirSync(dir, { recursive: true });
   const readme = path.join(dir, 'LEIA-ME.md');
   if (!fs.existsSync(readme)) {
@@ -305,4 +346,4 @@ function firstProjectDir(home = os.homedir()) {
   return dir;
 }
 
-module.exports = { AiTools, TOOLS, IDS, parseVersion, parseClaudeStatus, parseCodexStatus, parseGoogleStatus, fixShellText, firstProjectDir, PATH_LINE, strip };
+module.exports = { installerLooksOk, AiTools, TOOLS, IDS, parseVersion, parseClaudeStatus, parseCodexStatus, parseGoogleStatus, fixShellText, firstProjectDir, PATH_LINE, strip };

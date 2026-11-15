@@ -18,7 +18,11 @@
     black: '#1c1c22', red: '#ff5f57', green: '#30d158', yellow: '#ffbd2e', blue: '#64a8ff', magenta: '#c08cff', cyan: '#5ad6e0', white: '#d6d6dc',
     brightBlack: '#5c5c66', brightRed: '#ff7a73', brightGreen: '#5ee07f', brightYellow: '#ffd060', brightBlue: '#8cc0ff', brightMagenta: '#d4adff', brightCyan: '#86e6ee', brightWhite: '#ffffff',
   };
-  const FONT = '"SF Mono", ui-monospace, Menlo, monospace';
+  // v0.7 Windows: Ctrl no lugar do ⌘, fonte do Windows, caminho entre aspas duplas
+  // no celular, platform é o do COMPUTADOR (o remote-bridge recebe do servidor): o caminho colado é para o shell de lá
+  const WIN = window.bancada && window.bancada.platform === 'win32';
+  const HOST = WIN ? 'PC' : 'Mac';
+  const FONT = WIN ? '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace' : '"SF Mono", ui-monospace, Menlo, monospace';
 
   const terms = new Map();    // id -> { term, fit, el, projectId, name, alive, stale }
   let stash = null;
@@ -68,7 +72,7 @@
     if (!t.stale) { if (b) b.remove(); return; }
     if (b) return;
     b = window.UI.h('button', { class: 'term-stale', title: 'O terminal está no tamanho do outro aparelho', onmousedown: (e) => { e.preventDefault(); e.stopPropagation(); fitOne(t, true); } },
-      window.__REMOTE ? 'Tamanho do Mac · toque para ajustar aqui' : '📱 No tamanho do celular · clique para voltar ao do Mac');
+      window.__REMOTE ? 'Tamanho do computador · toque para ajustar aqui' : `📱 No tamanho do celular · clique para voltar ao do ${HOST}`);
     t.el.appendChild(b);
   }
 
@@ -85,20 +89,101 @@
   function makeTerm() {
     const term = new window.Terminal({
       fontFamily: FONT, fontSize: 13, lineHeight: 1, letterSpacing: 0,
-      cursorBlink: true, scrollback: SCROLLBACK, allowProposedApi: true, theme: THEME, macOptionIsMeta: true,
+      cursorBlink: true, scrollback: SCROLLBACK, allowProposedApi: true, theme: THEME, macOptionIsMeta: true, windowsPty: WIN ? { backend: 'conpty' } : undefined,
       drawBoldTextInBrightColors: false,
+      // links OSC 8 (o Claude Code manda com FORCE_HYPERLINK=1): http → Safari; file:// → mesmo tratamento dos caminhos
+      linkHandler: { allowNonHttpProtocols: true, activate: (e, uri) => { if (/^https?:/i.test(uri)) openUrl(uri); else if (/^file:\/\//i.test(uri)) { try { const u = new URL(uri); if (u.hostname) return; let p = decodeURIComponent(u.pathname); if (WIN) p = p.replace(/^\/([A-Za-z]:)/, '$1').replace(/\//g, '\\'); if (/^[\\/]{2}/.test(p)) return; openPath({ abs: p }); } catch {} } } },
     });
     const fit = new window.FitAddon.FitAddon();
     term.loadAddon(fit);
-    term.loadAddon(new window.WebLinksAddon.WebLinksAddon((_e, uri) => window.open(uri)));
+    // v0.6: link da web abre no Safari (no celular, no próprio aparelho)
+    term.loadAddon(new window.WebLinksAddon.WebLinksAddon((_e, uri) => openUrl(uri)));
     if (window.Unicode11Addon) {
       try { term.loadAddon(new window.Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = '11'; } catch {}
     }
     return { term, fit };
   }
 
+  // ---------- v0.6: caminho no texto vira link (pasta → Finder, .md → visualização, arquivo → Finder) ----------
+  function openUrl(uri) { const L = window.bancada.links; if (L && L.openUrl) L.openUrl(uri).catch(() => {}); else window.open(uri); }
+  async function openPath(r) {
+    const L = window.bancada.links; if (!L) return;
+    const toastErr = (e) => window.UI.toast(String((e && e.message) || e).replace(/^\[[A-Z_]+\]\s*/, ''));
+    let kind = r.kind;
+    if (!kind) { kind = /\.(md|markdown|mdx)$/i.test(r.abs) ? 'md' : 'dir'; }
+    if (kind === 'md') { if (window.MdView) window.MdView.open(r.abs); return; }
+    if (kind === 'dir') { if (L.openDir) L.openDir(r.abs).catch(toastErr); else window.UI.toast(`Abrir pasta só funciona no ${HOST}`); return; }
+    if (L.reveal) L.reveal(r.abs).catch(toastErr); else window.UI.toast(WIN ? 'Mostrar no Explorador só funciona no PC' : 'Mostrar no Finder só funciona no Mac');
+  }
+  const linkCache = new Map();   // "termId\u0000linha" -> Promise<resultados> (teto 300, some sozinho em 15 s)
+  // onde pode começar um caminho: "/x", "~/x", "./x", "../x" ou palavra com "/" (relativo); URL fica com o WebLinksAddon
+  function candidates(text) {
+    const out = [];
+    // v0.7: no Windows também "C:\\x", ".\\x" e "pasta\\x"
+    const re = WIN ? /(^|[\s(\[{"'`<=])([A-Za-z]:[\\/][^\s]|(?:~|\.{1,2})?[\\/][^\s]|[\p{L}\p{N}_@.-]+[\\/])/gu
+      : /(^|[\s(\[{"'`<:=])((?:~|\.{1,2})?\/[^\s]|[\p{L}\p{N}_@.-]+\/)/gu;
+    let m;
+    while ((m = re.exec(text)) && out.length < 24) {
+      const at = m.index + m[1].length;
+      const word = text.slice(at).split(/\s/)[0];
+      if (/:\/\//.test(word) || /^[\\/]{2}/.test(word)) continue;   // URL ou caminho de rede (\\servidor, //servidor, /\servidor)
+      out.push({ at, raw: text.slice(at, at + 600) });
+    }
+    return out;
+  }
+  // linha lógica (junta as linhas quebradas pelo tamanho do terminal) + posição de cada caractere na tela
+  function logical(term, y0) {
+    const buf = term.buffer.active;
+    let y = y0; while (y > 0) { const l = buf.getLine(y); if (!l || !l.isWrapped) break; y--; }
+    let text = ''; const pos = [];
+    const cell = buf.getNullCell ? buf.getNullCell() : undefined;
+    for (let row = y; row < buf.length; row++) {
+      const line = buf.getLine(row); if (!line) break;
+      if (row > y && !line.isWrapped) break;
+      for (let x = 0; x < line.length; x++) {
+        const c = line.getCell(x, cell); if (!c) break;
+        if (c.getWidth() === 0) continue;
+        const ch = c.getChars() || ' ';
+        for (const u of ch) { text += u; pos.push({ x: x + 1, y: row + 1 }); }
+      }
+      if (row - y > 20) break;
+    }
+    const trimmed = text.replace(/\s+$/, '');
+    return { text: trimmed, pos: pos.slice(0, trimmed.length) };
+  }
+  function pathLinks(t) {
+    return {
+      provideLinks(bufferLine, cb) {
+        const L = window.bancada.links; if (!L || !L.resolve) return cb(undefined);
+        const { text, pos } = logical(t.term, bufferLine - 1);
+        if (!text || !(WIN ? /[\\/]/ : /\//).test(text)) return cb(undefined);
+        const cands = candidates(text); if (!cands.length) return cb(undefined);
+        const key = `${t.id}\u0000${text}`;
+        let p = linkCache.get(key);
+        if (!p) {
+          p = L.resolve(t.id, cands).catch(() => []);
+          linkCache.set(key, p); setTimeout(() => linkCache.delete(key), 15000);
+          if (linkCache.size > 300) linkCache.delete(linkCache.keys().next().value);
+        }
+        p.then((res) => {
+          const links = []; let lastEnd = -1;
+          for (const r of res || []) {
+            if (!r || r.at < lastEnd || !pos[r.at] || !pos[r.at + r.len - 1]) continue;
+            lastEnd = r.at + r.len;
+            const start = pos[r.at], end = pos[r.at + r.len - 1];
+            if (end.y < bufferLine || start.y > bufferLine) continue;   // o xterm pede por linha da tela
+            links.push({ range: { start, end }, text: text.slice(r.at, r.at + r.len), decorations: { underline: true, pointerCursor: true },
+              activate: (e) => { if (e && e.button && e.button !== 0) return; openPath(r); } });
+          }
+          cb(links.length ? links : undefined);
+        });
+      },
+    };
+  }
+
   // caminho entre aspas simples (shell) para colar no terminal
-  const quote = (p) => "'" + String(p).replace(/'/g, "'\\''") + "'";
+  // Windows: aspas simples do PowerShell (literais; ' e as tipográficas ‘ ’ ‚ ‛ dobradas) — aspas duplas expandiriam $(…)
+  const quote = (p) => (WIN ? "'" + String(p).replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&') + "'" : "'" + String(p).replace(/'/g, "'\\''") + "'");
 
   function bindInputs(t) {
     // ⌘V com imagem (print) na área de transferência: o Mac salva em anexos/ e cola o caminho
@@ -139,6 +224,25 @@
     window.bancada.pty.paste(id, text).then(() => focus(id)).catch(() => {});
   }
 
+  // Windows: Ctrl+C copia se há seleção (senão interrompe, como sempre); Ctrl+V e Ctrl+Shift+V colam (o navegador cola,
+  // e a colagem de imagem passa pelo mesmo caminho do Mac); Ctrl+Shift+C copia. Ctrl+1…5 e Ctrl+Shift+T/J/F/\\ ficam
+  // com o app — Ctrl+T, Ctrl+J, Ctrl+F e Ctrl+R sozinhos continuam do terminal (o Claude usa).
+  function winKey(term, e) {
+    if (e.type !== 'keydown' || !e.ctrlKey || e.altKey) return true;
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (k === 'c' && (e.shiftKey || term.hasSelection())) {
+      const sel = term.getSelection(); if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+      term.clearSelection(); e.preventDefault(); return false;
+    }
+    if (k === 'v') return false;                                  // deixa o navegador colar (evento paste)
+    if (!e.shiftKey && ['1', '2', '3', '4', '5'].includes(k)) return false;
+    if (e.shiftKey && ['t', 'j', 'f', '\\', '|', 'k'].includes(k)) {
+      if (k === 'k') { term.clear(); e.preventDefault(); }
+      return false;
+    }
+    return true;
+  }
+
   // cria (se preciso) e coloca o terminal dentro do painel `container`; liga o processo se ainda não está rodando
   async function open({ id, projectId, name, cwd, startup, container }) {
     await fontsReady;
@@ -149,6 +253,7 @@
       (container || stash).appendChild(el);
       term.open(el);
       t = { id, term, fit, el, projectId, name, cwd, startup, alive: false, stale: false, sizedOnce: false };
+      term.registerLinkProvider(pathLinks(t));
       terms.set(id, t);
       ro.observe(el);
       term.onData((d) => {
@@ -158,6 +263,7 @@
       });
       // ⌘K limpa; o resto dos atalhos com ⌘ fica com o app
       term.attachCustomKeyEventHandler((e) => {
+        if (WIN) return winKey(term, e);
         if (e.type === 'keydown' && e.metaKey && e.key === 'k') { term.clear(); return false; }
         if (e.metaKey && ['1', '2', '3', '4', '5', 't', 'j', 'f', '\\'].includes(e.key)) return false;
         return true;

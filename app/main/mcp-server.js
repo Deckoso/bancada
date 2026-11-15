@@ -84,7 +84,13 @@ function writeAtomic(file, data) {
   fs.renameSync(tmp, file);
 }
 
-function ask(rpcId, kind, args) {
+// v0.6: o Claude Code desiste de uma ferramenta que fica 30 min sem resposta NEM progresso
+// (CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT; o MCP_TOOL_TIMEOUT não cobre isso). Enquanto o cartão espera, avisa a cada 60 s que
+// continua vivo — só quando o pedido trouxe progressToken (é o protocolo: sem token, não se manda progresso).
+const PROGRESS_MS = Math.max(200, Number(process.env.BANCADA_PROGRESS_MS) || 60 * 1000);   // env só para teste
+function progress(token, n) { out({ jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: token, progress: n, message: 'esperando a resposta no cartão da Bancada' } }); }
+
+function ask(rpcId, kind, args, progressToken) {
   if (!ASK_DIR || !/^[A-Za-z0-9_-]{1,80}$/.test(TERM)) return text(rpcId, 'A ponte da Bancada não está configurada neste terminal.', true);
   const body = JSON.stringify({ kind, args: args || {}, term: TERM, project: PROJECT, pid: process.pid, at: Date.now() });
   if (Buffer.byteLength(body) > MAX_ARGS) return text(rpcId, 'Pedido grande demais para o cartão (máx. 64 KB). Encurte os textos.', true);
@@ -95,8 +101,10 @@ function ask(rpcId, kind, args) {
   const started = Date.now();
   const entry = { file: askFile, timer: null };
   open.set(rpcId, entry);
+  let lastBeat = started; let beats = 0;
   const tick = () => {
     if (!open.has(rpcId)) return;
+    if (progressToken != null && kind !== 'pendencias' && Date.now() - lastBeat >= PROGRESS_MS) { lastBeat = Date.now(); progress(progressToken, ++beats); }
     let a = null;
     try { a = JSON.parse(fs.readFileSync(ansFile, 'utf8')); } catch {}
     if (a) {
@@ -124,7 +132,7 @@ function handle(msg) {
   if (!msg || msg.jsonrpc !== '2.0') return;
   const { id, method, params } = msg;
   if (method === 'initialize') {
-    return reply(id, { protocolVersion: (params && params.protocolVersion) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'bancada', version: '0.4.0' } });
+    return reply(id, { protocolVersion: (params && params.protocolVersion) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'bancada', version: '0.6.0' } });
   }
   if (method === 'notifications/cancelled') return cancel(params && params.requestId);
   if (method && method.startsWith('notifications/')) return;
@@ -133,7 +141,8 @@ function handle(msg) {
   if (method === 'tools/call') {
     const name = params && params.name;
     if (!TOOLS.some(t => t.name === name)) return fail(id, -32602, `ferramenta desconhecida: ${name}`);
-    return ask(id, name, params.arguments);
+    const meta = params && params._meta; const tok = meta && (typeof meta.progressToken === 'string' || typeof meta.progressToken === 'number') ? meta.progressToken : null;
+    return ask(id, name, params.arguments, tok);
   }
   if (id != null) fail(id, -32601, `método não suportado: ${method}`);
 }

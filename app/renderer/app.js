@@ -6,6 +6,12 @@
   const { h, clear, $, ago, today, toast, modal, editable, errCode } = window.UI;
   const { draggable, sortable, dropTarget } = window.DnD;
   const B = window.bancada;
+  // v0.7 Windows: Ctrl no lugar do ⌘ (com Shift onde a tecla sozinha é do terminal: Ctrl+T, Ctrl+J… o Claude usa)
+  const WIN = B.platform === 'win32';
+  const HOST = WIN ? 'PC' : 'Mac';
+  if (WIN) document.body.classList.add('win');
+  const K = WIN ? { n: (i) => `Ctrl+${i}`, t: 'Ctrl+Shift+T', split: 'Ctrl+Shift+\\', enter: 'Ctrl+Enter', note: 'Alt+Espaço' }
+    : { n: (i) => `⌘${i}`, t: '⌘T', split: '⌘\\', enter: '⌘↩', note: '⌥Space' };
 
   const KIND_LABEL = { software: 'Software', live: 'Live', musica: 'Música', outro: 'Outro' };
   const TYPE_LABEL = { note: 'Nota', idea: 'Ideia', prompt: 'Prompt', reminder: 'Lembrete', step: 'Passo' };
@@ -54,8 +60,27 @@
     bindChrome();
     bindLive();
     window.AskUI.init({ goTerm: (pid, tid) => goTerminal(pid, tid) });
+    // v0.6: .md clicado no terminal abre na prévia de arquivo (a mesma janela da aba Arquivos), formatado
+    if (window.MdView) window.MdView.setTarget((doc) => {
+      const L = B.links || {}; let body = null;
+      modal((c, close) => {
+        c.classList.add('xwide');
+        const kb = doc.size > 1048576 ? `${(doc.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(doc.size / 1024))} KB`;
+        const actions = h('div', { class: 'row wrap' },
+          window.MdView.canBack() ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => { close(); window.MdView.back(); } }, '← Voltar') : null,
+          L.reveal ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => L.reveal(doc.path).catch(e => toast(e.message)) }, 'Mostrar no Finder') : null,
+          h('button', { class: 'aurora-btn aurora-btn--glass sm', title: 'Cola o caminho no terminal em foco', onclick: async () => { if (await pasteToTerminal(window.Terminals.quote(doc.path) + ' ')) close(); } }, 'Colar caminho no terminal'),
+          h('button', { class: 'aurora-btn aurora-btn--text sm', onclick: close }, 'Fechar'));
+        body = h('div', { class: 'md-body md-modal' });
+        c.append(h('div', { class: 'fp-head' }, h('h2', { class: 'mono', title: doc.path, text: doc.name }), h('span', { class: 'muted small', text: `${doc.dir.replace(/^\/Users\/[^/]+/, '~')} · ${kb}` })), actions, body);
+      });
+      return body ? { body } : null;
+    });
     if (window.ActivityUI) window.ActivityUI.init({ goTerm: (pid, tid) => goTerminal(pid, tid), terms: officeTerms, termInfo: (id) => { const m = meta(id); return m && m.p ? { projectId: m.p.id } : null; },
-      openOffice: () => { S.panelTab = 'office'; save('bancada.panelTab', 'office'); renderPanel(); document.body.classList.add('m-panel-open'); } });
+      openOffice: () => { S.panelTab = 'office'; save('bancada.panelTab', 'office'); renderPanel(); document.body.classList.add('m-panel-open'); },
+      // v0.6: quadro de pendências na parede do Escritório 3D (só o texto curto; clique leva ao painel Projeto)
+      pending: async () => { const l = (await B.items.list(S.activeId)).filter(i => i.type === 'pending' && i.state === 'active'); return { items: l.slice(0, 4).map(i => String(i.text || '').slice(0, 80)), total: l.length }; },
+      openPending: () => { S.panelTab = 'project'; save('bancada.panelTab', 'project'); renderPanel(); } });
     await loadLive();
     await restoreTree().catch(() => {});
     B.onDataChanged(async (ev) => {
@@ -124,11 +149,13 @@
     $('#btn-guided').addEventListener('click', () => guidedModal());
     $('#btn-settings').addEventListener('click', () => settingsModal());
     document.addEventListener('keydown', (e) => {
-      if (!e.metaKey || !$('#modal').classList.contains('hidden')) return;
-      if (['1', '2', '3', '4', '5'].includes(e.key)) { const p = focusProjects()[Number(e.key) - 1]; if (p) { e.preventDefault(); go('project', p.id); } }
-      if (e.key === 't' && S.view === 'project') { e.preventDefault(); newTerminalModal(); }
-      if (e.key === 'j') { e.preventDefault(); go('today'); }
-      if (e.key === '\\' && S.view === 'project') { e.preventDefault(); splitMenu(); }
+      if (!(WIN ? e.ctrlKey && !e.altKey : e.metaKey) || !$('#modal').classList.contains('hidden')) return;
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const sh = !WIN || e.shiftKey;          // Windows: letras só com Ctrl+Shift
+      if (!(WIN && e.shiftKey) && ['1', '2', '3', '4', '5'].includes(k)) { const p = focusProjects()[Number(k) - 1]; if (p) { e.preventDefault(); go('project', p.id); } }
+      if (sh && k === 't' && S.view === 'project') { e.preventDefault(); newTerminalModal(); }
+      if (sh && k === 'j') { e.preventDefault(); go('today'); }
+      if (sh && (k === '\\' || (WIN && k === '|')) && S.view === 'project') { e.preventDefault(); splitMenu(); }
     });
 
     // arrastar: projetos entre Foco e Estante (os contêineres são fixos — registra uma vez só)
@@ -170,7 +197,7 @@
   function renderSide() {
     const fl = clear($('#focus-list'));
     const limit = S.settings.focus_limit || 3;
-    for (const [i, p] of focusProjects().entries()) fl.appendChild(projectNav(p, `⌘${i + 1}`));
+    for (const [i, p] of focusProjects().entries()) fl.appendChild(projectNav(p, K.n(i + 1)));
     $('#focus-hint').textContent = `${focusProjects().length}/${limit}`;
     if (!focusProjects().length) fl.appendChild(h('div', { class: 'nav-empty', text: 'Nada em foco. Arraste um projeto da estante para cá.' }));
     const sl = clear($('#shelf-list'));
@@ -488,8 +515,8 @@
       tabs.appendChild(h('button', { class: 'tab add claude', title: `Novo Claude ${where}, com permissões normais (pede confirmação)`, onclick: () => quickClaude(false) }, '+ ✳︎ Claude'));
       tabs.appendChild(h('button', { class: 'tab add claude skip', title: `Novo Claude ${where} com --dangerously-skip-permissions (não pede confirmação de nada)`, onclick: () => quickClaude(true) }, '+ ⚡ sem permissões'));
     }
-    tabs.appendChild(h('button', { class: 'tab add', title: 'Novo terminal (⌘T)', onclick: () => newTerminalModal() }, '+'));
-    if (!window.__REMOTE) tabs.appendChild(h('button', { class: 'tab add split-btn', title: 'Dividir a tela: abrir outro terminal ao lado (⌘\\). Também dá para arrastar uma aba para a borda do painel.', onclick: () => splitMenu() }, '◫ Dividir'));
+    tabs.appendChild(h('button', { class: 'tab add', title: `Novo terminal (${K.t})`, onclick: () => newTerminalModal() }, '+'));
+    if (!window.__REMOTE) tabs.appendChild(h('button', { class: 'tab add split-btn', title: `Dividir a tela: abrir outro terminal ao lado (${K.split}). Também dá para arrastar uma aba para a borda do painel.', onclick: () => splitMenu() }, '◫ Dividir'));
   }
   function shortName(n) { return n.length > 14 ? n.slice(0, 13) + '…' : n; }
 
@@ -782,12 +809,12 @@
     const prompts = items.filter(i => i.type === 'prompt' && i.state === 'active');
     return card('prompts', `Fila de prompts${prompts.length ? ` · ${prompts.length}` : ''}`, [], h('div', { class: 'card-body list' },
       prompts.length ? itemList(prompts, promptRow) : h('div', { class: 'muted', text: 'Prompts que você anotar aqui vão para o terminal com um clique.' }),
-      addBox(p.id, 'prompt', 'Novo prompt… (⌘↩)')));
+      addBox(p.id, 'prompt', `Novo prompt… (${K.enter})`)));
   }
 
   function cardNotes(p, items) {
     const notes = items.filter(i => i.type !== 'prompt' && i.type !== 'step' && i.type !== 'pending' && i.state === 'active');
-    return card('notes', 'Notas e ideias', [], h('div', { class: 'card-body list' }, notes.length ? itemList(notes, noteRow) : null, addBox(p.id, 'note', 'Anotar… (⌘↩)')));
+    return card('notes', 'Notas e ideias', [], h('div', { class: 'card-body list' }, notes.length ? itemList(notes, noteRow) : null, addBox(p.id, 'note', `Anotar… (${K.enter})`)));
   }
 
   // Pendências (v0.4): o que o usuário marcou "Adiar" nos cartões, ou o Claude anotou. Sem aviso (decisão dele).
@@ -924,7 +951,7 @@
     const ta = h('textarea', { class: 'aurora-input add', rows: 1, placeholder });
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; });
     ta.addEventListener('keydown', async (e) => {
-      if (e.key === 'Enter' && e.metaKey) {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         const text = ta.value.trim(); if (!text) return;
         await B.items.create({ project_id: projectId, text, type }); ta.value = '';
@@ -1031,8 +1058,8 @@
     const v = clear($('#view-inbox'));
     const items = await B.items.list('inbox');
     const wrap = h('div', { class: 'inbox' });
-    wrap.appendChild(h('p', { class: 'lead', text: items.length ? 'O que você anotou sem projeto. Arraste cada um para um projeto da barra lateral, quando der.' : 'Inbox vazia. ⌥Space anota de qualquer lugar.' }));
-    wrap.appendChild(addBox('inbox', 'note', 'Anotar… (⌘↩)'));
+    wrap.appendChild(h('p', { class: 'lead', text: items.length ? 'O que você anotou sem projeto. Arraste cada um para um projeto da barra lateral, quando der.' : `Inbox vazia. ${K.note} anota de qualquer lugar.` }));
+    wrap.appendChild(addBox('inbox', 'note', `Anotar… (${K.enter})`));
     const list = h('div', { class: 'item-list' });
     for (const it of items) {
       const sel = h('select', { class: 'aurora-input sm', title: 'Mover para projeto' }, h('option', { value: '', text: 'mover para…' }),
@@ -1093,7 +1120,7 @@
       const aliases = h('input', { class: 'aurora-input', value: (p.aliases || []).join(', '), placeholder: 'outros nomes: meuapp, meu app' });
       const eng = engineSelect(p.engine_id);
       c.append(h('h2', { text: p.name }), field('Nome', name), field('Tipo', kind), field('Motor (onde o Claude deste projeto roda)', eng),
-        field('Pastas do projeto (uma por linha)', paths), field('Apelidos (ajudam a achar as sessões e o #tag do ⌥Space)', aliases),
+        field('Pastas do projeto (uma por linha)', paths), field('Apelidos (ajudam a achar as sessões e o #tag do ${K.note})`, aliases),
         h('div', { class: 'row between' },
           h('button', { class: 'aurora-btn aurora-btn--text danger', onclick: async () => { if (!confirm(`Apagar ${p.name}? As notas somem da lista.`)) return; await B.projects.update(p.id, { deleted: true }); close(); await loadProjects(); go(focusProjects()[0] ? 'project' : 'today', focusProjects()[0] && focusProjects()[0].id); } }, 'Apagar projeto'),
           h('div', { class: 'row' }, h('button', { class: 'aurora-btn aurora-btn--text', onclick: close }, 'Cancelar'),
@@ -1202,7 +1229,7 @@
         } catch (e) { toast(e.message, 6000); }
         off(); busy = false; paint();
       };
-      const btns = window.__REMOTE ? [h('span', { class: 'muted small', text: 'Instalar e conectar só no Mac.' })] : [
+      const btns = window.__REMOTE ? [h('span', { class: 'muted small', text: 'Instalar e conectar só no computador.' })] : [
         !st.installed ? h('button', { class: 'aurora-btn aurora-btn--primary sm', onclick: () => run('install') }, 'Instalar') : null,
         st.installed && st.connected !== true ? h('button', { class: 'aurora-btn aurora-btn--primary sm', onclick: () => aiLoginModal(st, after) }, 'Entrar na minha conta') : null,
         st.installed && st.connected === true ? h('button', { class: 'aurora-btn aurora-btn--text sm', title: 'Trocar de conta ou entrar de novo', onclick: () => aiLoginModal(st, after) }, 'Trocar de conta') : null,
@@ -1211,13 +1238,14 @@
       ];
       return h('div', { class: `ai-card ${st.installed && st.connected ? 'on' : ''}` },
         h('div', { class: 'row' }, h('span', { class: 'ai-icon', text: icon }), h('strong', { text: st.name }), h('span', { class: 'muted small', text: st.vendor })),
-        ...lines, h('div', { class: 'muted small', text: st.plan }), h('div', { class: 'row wrap' }, ...btns), log);
+        ...lines, h('div', { class: 'muted small', text: st.plan }), st.note ? h('div', { class: 'small amber-text', text: st.note }) : null, h('div', { class: 'row wrap' }, ...btns), log);
     };
 
     const paintShell = async () => {
       if (window.__REMOTE) return;
       clear(shellBox);
       let sc; try { sc = await B.ai.shellCheck(); } catch { return; }
+      if (sc.na) return;   // Windows: não há .zshrc para consertar
       if (sc.ok) { shellBox.appendChild(h('p', { class: 'small ok-text', text: '✓ O Terminal do Mac (fora da Bancada) também acha as IAs.' })); return; }
       shellBox.append(
         h('p', { class: 'small muted', text: `Os terminais da Bancada acham as IAs sempre. O Terminal do Mac, fora da Bancada, ${sc.duplicates ? `tem a configuração repetida ${sc.duplicates + 1} vezes no ~/.zshrc` : sc.has_line ? 'não está achando as IAs' : 'não sabe onde as IAs ficam (falta uma linha no ~/.zshrc)'}.` }),
@@ -1242,7 +1270,7 @@
 
   // Login da própria IA num terminal embutido: o navegador abre na página da empresa; código (se pedir) cola aqui.
   async function aiLoginModal(st, after) {
-    if (window.__REMOTE) { toast('Conectar só no Mac'); return; }
+    if (window.__REMOTE) { toast('Conectar só no computador'); return; }
     const id = `ai-login-${st.id}`;
     const host = h('div', { class: 'ai-login-term' });
     modal((c, close) => {
@@ -1321,10 +1349,10 @@
       const limit = h('select', { class: 'aurora-input' }, [1, 2, 3, 4, 5].map(n => h('option', { value: n, text: String(n), selected: st.focus_limit === n })));
       const aiOn = h('input', { type: 'checkbox', checked: st.ai_summary });
       const skipDef = h('input', { type: 'checkbox', checked: !!st.claude_skip_default });
-      const theme = h('select', { class: 'aurora-input' }, [['system', 'Igual ao Mac'], ['light', 'Claro'], ['dark', 'Escuro']].map(([v2, l]) => h('option', { value: v2, text: l, selected: st.theme === v2 })));
+      const theme = h('select', { class: 'aurora-input' }, [['system', WIN ? 'Igual ao Windows' : 'Igual ao Mac'], ['light', 'Claro'], ['dark', 'Escuro']].map(([v2, l]) => h('option', { value: v2, text: l, selected: st.theme === v2 })));
       c.append(h('h2', { text: 'Ajustes' }),
         h('h3', { class: 'sec', text: 'Assistentes de IA' }),
-        h('p', { class: 'muted small', text: 'Instale e conecte as IAs com um clique. Os terminais da Bancada acham cada uma sozinhos, mesmo que o Terminal do Mac dê "command not found".' }),
+        h('p', { class: 'muted small', text: WIN ? 'Instale e conecte as IAs com um clique. Os terminais da Bancada acham cada uma sozinhos.' : 'Instale e conecte as IAs com um clique. Os terminais da Bancada acham cada uma sozinhos, mesmo que o Terminal do Mac dê "command not found".' }),
         aiSection({ after: settingsModal }),
         h('h3', { class: 'sec', text: 'Motores' }),
         h('p', { class: 'muted small', text: 'O motor é a pasta-cérebro (ex.: athena-os): o Claude de cada projeto abre dentro dela, com as skills e comandos dela, focado no projeto. A Bancada confere a pasta toda vez que abre e quando ela muda.' }),

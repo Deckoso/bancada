@@ -17,10 +17,8 @@ const DAILY_CAP = 40;
 const TIMEOUT_MS = 90 * 1000;
 const MAX_DIGEST = 6 * 1024;
 
-const CLAUDE_CANDIDATES = [
-  path.join(os.homedir(), '.local', 'bin', 'claude'),
-  '/opt/homebrew/bin/claude', '/usr/local/bin/claude',
-];
+// mesma lista do ai-tools (Mac: ~/.local/bin, Homebrew… · Windows: %USERPROFILE%\\.local\\bin\\claude.exe)
+const CLAUDE_CANDIDATES = require('./platform').aiCandidates('claude', os.homedir());
 
 function findClaude() { return CLAUDE_CANDIDATES.find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } }) || null; }
 
@@ -199,7 +197,7 @@ class Summarizer {
     fs.mkdirSync(this.workDir, { recursive: true, mode: 0o700 });
     return new Promise((resolve, reject) => {
       const child = spawn(bin, ['-p', '--model', 'haiku', '--no-session-persistence', '--output-format', 'json', '--tools', ''],
-        { cwd: this.workDir, env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined }, stdio: ['pipe', 'pipe', 'pipe'] });
+        { cwd: this.workDir, env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
       let out = ''; let err = '';
       const t = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('resumo passou de 90 s')); }, TIMEOUT_MS);
       child.stdout.on('data', d => { if (out.length < 256 * 1024) out += d; });

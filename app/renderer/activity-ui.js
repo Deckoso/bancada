@@ -127,38 +127,116 @@
     let hover = null;
     let placed = [];
 
-    function mount(container) {
-      host = container;
-      const bar = h('div', { class: 'office-bar' },
+    let three = false;           // v0.6: Escritório 3D (office3d.js); o 2D fica de reserva (sem WebGL)
+    let pendAt = 0, pend = null;
+    const use3d = () => !!(window.Office3D && window.Office3D.supported() && !localStorage.getItem('bancada.office2d'));
+
+    // A sala 3D é criada UMA vez e só muda de lugar (painel ⇄ tela cheia). Antes, cada re-render do painel recriava a
+    // cena: a tela piscava, os bonecos voltavam ao início e, depois de muitas recriações, o WebGL esgotava e ficava cinza.
+    let root = null, panelHost = null;
+    function barEl() {
+      return h('div', { class: 'office-bar' },
         h('div', { class: 'panel-seg mini' },
-          h('button', { class: `seg-btn ${scope === 'project' ? 'on' : ''}`, onclick: () => { scope = 'project'; mount(host); } }, 'Este projeto'),
-          h('button', { class: `seg-btn ${scope === 'all' ? 'on' : ''}`, onclick: () => { scope = 'all'; mount(host); } }, 'Todos')),
+          h('button', { class: `seg-btn ${scope === 'project' ? 'on' : ''}`, onclick: () => setScope('project') }, 'Este projeto'),
+          h('button', { class: `seg-btn ${scope === 'all' ? 'on' : ''}`, onclick: () => setScope('all') }, 'Todos')),
         h('span', { class: 'grow' }),
-        h('button', { class: 'office-big', title: big ? 'Voltar ao painel' : 'Abrir grande', onclick: toggleBig }, big ? '✕' : '⤢'));
-      canvas = h('canvas', { class: 'office-canvas' });
-      const legend = h('div', { class: 'office-legend', id: 'office-legend' });
+        three ? h('button', { class: 'office-big', title: 'Voltar à vista inicial', onclick: () => window.Office3D && window.Office3D.recenter() }, '⟲') : null,
+        h('button', { class: `office-big ${big ? '' : 'wide'}`, title: big ? 'Voltar ao painel (Esc)' : 'Abrir em tela cheia', onclick: toggleBig }, big ? '✕' : '⤢ Tela cheia'));
+    }
+    function refreshBar() { if (!root) return; const old = root.querySelector('.office-bar'); if (old) old.replaceWith(barEl()); }
+    function setScope(sc) { if (scope === sc) return; scope = sc; pendAt = 0; if (three) { refreshBar(); sync(); } else if (host) build(host); }
+    function placeholder(container) {
+      while (container.firstChild) container.removeChild(container.firstChild);
+      container.appendChild(h('div', { class: 'office-away' }, 'O Escritório está aberto em tela cheia.'));
+    }
+    // chamado pelo painel (a cada re-render) e pela tela cheia
+    function mount(container, fromBig) {
+      if (big && !fromBig) { panelHost = container; placeholder(container); return; }   // painel re-renderizou: a sala fica onde está
+      if (!fromBig) panelHost = container;
+      if (root && three && window.Office3D && window.Office3D.isMounted()) {
+        host = container;
+        while (container.firstChild) container.removeChild(container.firstChild);
+        container.appendChild(root); refreshBar(); sync(); return;               // só move o DOM; o WebGL continua o mesmo
+      }
+      build(container);
+    }
+    function build(container) {
+      if (three && window.Office3D) window.Office3D.unmount();
+      stop(); three = false;
+      host = container;
+      three = use3d();
+      const stage = h('div', { class: 'office-stage' });
+      const legendEl = h('div', { class: 'office-legend', id: 'office-legend' });
+      root = h('div', { class: 'office-root' }, barEl(), stage, legendEl);
       while (host.firstChild) host.removeChild(host.firstChild);
-      host.append(bar, canvas, legend);
+      host.appendChild(root);
+      if (three) {
+        canvas = null; ctx = null;
+        window.Office3D.mount(stage, { goTerm: (termId) => { const info = opts.termInfo(termId); if (info) opts.goTerm(info.projectId, termId); if (big) toggleBig(); },
+          servers: B.servers || null, remote: !!window.__REMOTE, openPending: () => { if (big) toggleBig(); if (opts.openPending) opts.openPending(); } });
+        sync(); return;
+      }
+      canvas = h('canvas', { class: 'office-canvas' });
+      stage.appendChild(canvas);
       ctx = canvas.getContext('2d');
       canvas.addEventListener('mousemove', (e) => { hover = pick(e); canvas.style.cursor = hover ? 'pointer' : 'default'; });
       canvas.addEventListener('mouseleave', () => { hover = null; });
       canvas.addEventListener('click', (e) => { const a = pick(e); if (a && a.termId) { const info = opts.termInfo(a.termId); if (info) opts.goTerm(info.projectId, a.termId); if (big) toggleBig(); } });
       sync(); start();
     }
+    // o módulo 3D carrega depois dos scripts normais: se a sala já abriu em 2D, troca para 3D
+    window.addEventListener('office3d-ready', () => { if (host && !three && use3d()) build(host); });
 
+    function onKey(e) { if (e.key === 'Escape' && big) toggleBig(); }
     function toggleBig() {
-      if (big) { big.remove(); big = null; const p = document.querySelector('#panel .office-host'); if (p) mount(p); else { stop(); host = null; } return; }
+      if (big) {
+        const box = big; big = null; document.removeEventListener('keydown', onKey);
+        const p = panelHost && panelHost.isConnected ? panelHost : document.querySelector('#panel .office-host');
+        if (p) mount(p); else { teardown(); }
+        box.remove(); return;
+      }
       big = h('div', { class: 'office-overlay' }, h('div', { class: 'office-overlay-box' }));
       big.addEventListener('mousedown', (e) => { if (e.target === big) toggleBig(); });
-      document.body.appendChild(big);
-      mount(big.firstChild);
+      document.body.appendChild(big); document.addEventListener('keydown', onKey);
+      const from = host;
+      mount(big.firstChild, true);
+      if (from && from !== big.firstChild && from.isConnected) placeholder(from);
     }
 
-    function unmount() { if (big) return; stop(); host = null; canvas = null; ctx = null; }
+    function teardown() { if (three && window.Office3D) window.Office3D.unmount(); three = false; stop(); host = null; canvas = null; ctx = null; root = null; }
+    function unmount() { if (big) return; teardown(); }
+
+    // v0.6: o que o 3D precisa saber de cada um (o 3D decide a animação e o lugar)
+    function model3d() {
+      const terms = opts.terms(scope);
+      const actorsList = []; const tasks = [];
+      for (const t of terms) { const a = act[t.id]; if (a) for (const k of a.tasks) tasks.push({ ...k, termId: t.id }); }
+      terms.forEach((t, i) => {
+        const a = act[t.id]; const color = COLORS[i % COLORS.length]; const st = t.state;
+        const busy = st === 'working' || (a && a.doing.length);
+        const mode = a && a.stalled ? 'stalled' : st === 'waiting' ? 'waiting' : busy ? 'desk' : st === 'background' || (a && a.tasks.length) ? 'machine' : 'sofa';
+        const d0 = a && (a.doing.find(d => d.name !== 'Agent' && d.name !== 'Task') || a.doing[0]);
+        const bubble = mode === 'waiting' ? 'esperando você' : mode === 'stalled' ? 'sem sinal há algum tempo' : d0 ? `${d0.verb}${d0.what ? ': ' + d0.what : ''}` : mode === 'machine' && a.tasks[0] ? `aguardando: ${a.tasks[0].what || 'tarefa'}` : 'parado';
+        actorsList.push({ id: t.id, termId: t.id, kind: 'claude', name: `${t.projectName} · ${t.name}`, color, mode, verb: d0 ? d0.verb : (mode === 'machine' ? 'Aguardando tarefa' : null), what: d0 ? d0.what : '', bubble,
+          taskIdx: Math.max(0, tasks.findIndex(k => k.termId === t.id)) });
+        if (a) for (const ag of a.agents) {
+          actorsList.push({ id: `ag:${ag.id}`, termId: t.id, kind: 'agent', name: `${ag.type} (de ${t.name})`, color: AGENT_COLORS[ag.type] || '#8fa3b8',
+            mode: ag.done ? 'leave' : now() - ag.lastSignalAt > 120000 ? 'stalled' : 'desk', verb: ag.last ? ag.last.verb : 'Agente', what: ag.last ? ag.last.what : ag.what,
+            bubble: ag.done ? 'terminei' : ag.what });
+        }
+      });
+      return { actors: actorsList.filter(x => x.mode !== 'leave'), tasks, pending: pend };
+    }
+    function loadPending() {
+      if (!opts.pending || Date.now() - pendAt < 5000) return;
+      pendAt = Date.now();
+      opts.pending(scope).then((p) => { pend = p; if (three && window.Office3D) window.Office3D.update(model3d()); }).catch(() => {});
+    }
 
     // ---- quem está na sala ----
     function sync() {
       if (!host) return;
+      if (three && window.Office3D) { loadPending(); window.Office3D.update(model3d()); legend(); return; }
       const terms = opts.terms(scope);          // [{ id, name, projectName, projectId, state }]
       const want = new Map();
       terms.forEach((t, i) => {

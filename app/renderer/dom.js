@@ -81,7 +81,7 @@
       };
       inp.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
-        if (e.key === 'Enter' && (!multiline || e.metaKey)) { e.preventDefault(); finish(true); }
+        if (e.key === 'Enter' && (!multiline || e.metaKey || e.ctrlKey)) { e.preventDefault(); finish(true); }
       });
       inp.addEventListener('blur', () => finish(true));
     });

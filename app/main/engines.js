@@ -123,6 +123,7 @@ function summary(r) {
 
 // ---------- como o terminal abre o Claude no motor, focado no projeto ----------
 function q(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+const plat = require('./platform');
 
 function sessionFileExists(sessionId) {
   const root = path.join(os.homedir(), '.claude', 'projects');
@@ -154,7 +155,7 @@ function focusPrompt(project, engine, { bridge = false } = {}) {
   return lines.join('\n');
 }
 
-const NOT_INSTALLED = (name) => `${name} não está instalado neste Mac. Abra Ajustes → Assistentes de IA e clique em Instalar.`;
+const NOT_INSTALLED = (name) => `${name} não está instalado neste ${plat.MACHINE}. Abra Ajustes → Assistentes de IA e clique em Instalar.`;
 
 // Retorna { cwd, exec|command, sessionId } para um terminal. Tokens:
 //   bancada:claude  → Claude no motor (ou, sem motor, na pasta do projeto); retoma a conversa presa a este terminal
@@ -166,7 +167,8 @@ const NOT_INSTALLED = (name) => `${name} não está instalado neste Mac. Abra Aj
 // faz a Bancada funcionar mesmo com o .zshrc sem o PATH (o "erro de path"). Sem bins → nome simples (testes/legado).
 // bridge (v0.4): { mcpConfig(termId, projectId) → arquivo, pluginDir } — ferramentas de pergunta e o comando /bancada:entrevista
 // initialPrompt: primeira mensagem (ex.: "/bancada:entrevista setor novo"), só na abertura em que foi pedida
-function launchSpec({ store, terminal, project, promptDir, hooksSettings = null, extraDirs = [], bins = null, bridge = null, initialPrompt = null }) {
+// win: monta o comando para o PowerShell (Windows) em vez do zsh (Mac) — o Mac sai idêntico ao de sempre
+function launchSpec({ store, terminal, project, promptDir, hooksSettings = null, extraDirs = [], bins = null, bridge = null, initialPrompt = null, win = plat.IS_WIN }) {
   const engineCfg = store.engineFor(project);
   const projDir = (project.paths || [])[0] || null;
   const token = terminal.startup || null;
@@ -175,7 +177,7 @@ function launchSpec({ store, terminal, project, promptDir, hooksSettings = null,
     const k = token === 'bancada:codex' ? 'codex' : 'google';
     const b = binOf(k, token === 'bancada:codex' ? 'codex' : 'agy');
     if (!b) return { cwd: projDir || terminal.cwd, command: null, warning: NOT_INSTALLED(k === 'codex' ? 'O Codex' : 'O Google (agy)') };
-    return { cwd: projDir || terminal.cwd, exec: q(b), command: null };
+    return { cwd: projDir || terminal.cwd, exec: plat.renderCommand({ tokens: [{ v: b, quote: true }] }, win), command: null };
   }
   if (token === 'bancada:claude' || token === 'bancada:engine') {
     const engineOk = !!(engineCfg && inspect(engineCfg.path).ok);
@@ -187,19 +189,22 @@ function launchSpec({ store, terminal, project, promptDir, hooksSettings = null,
     let sid = terminal.session_id;
     const resume = !!(sid && sessionFileExists(sid));
     if (!sid) sid = crypto.randomUUID();
-    const parts = [];
+    const env = []; const parts = [];                 // parts: pedaços { v, quote } (aspas só onde o Mac sempre pôs)
+    const flag = (f) => parts.push({ v: f }); const val = (x) => parts.push({ v: x, quote: true });
     // a ferramenta de pergunta espera o usuário responder (pode levar horas): sem limite curto de tempo
-    if (bridge) parts.push('MCP_TOOL_TIMEOUT=86400000');
-    parts.push(bins ? q(claude) : 'claude', resume ? `--resume ${q(sid)}` : `--session-id ${q(sid)}`, `-n ${q(`${project.name} · ${terminal.name}`)}`);
-    if (terminal.skip_perms) parts.push('--dangerously-skip-permissions');   // escolha do usuário, por terminal
+    if (bridge) env.push(['MCP_TOOL_TIMEOUT', '86400000'], ['CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT', '86400000']);
+    parts.push({ v: claude, quote: !!bins });
+    flag(resume ? '--resume' : '--session-id'); val(sid);
+    flag('-n'); val(`${project.name} · ${terminal.name}`);
+    if (terminal.skip_perms) flag('--dangerously-skip-permissions');   // escolha do usuário, por terminal
     // no motor, a pasta do projeto entra por --add-dir; sem motor, o Claude já roda dentro dela
-    if (projDir && engine) parts.push(`--add-dir ${q(projDir)}`);
-    for (const d of extraDirs) parts.push(`--add-dir ${q(d)}`);          // ex.: anexos/ (imagens coladas no terminal)
+    if (projDir && engine) { flag('--add-dir'); val(projDir); }
+    for (const d of extraDirs) { flag('--add-dir'); val(d); }          // ex.: anexos/ (imagens coladas no terminal)
     // hooks da Bancada (estado trabalhando/esperando/terminou) SOMAM aos do motor; os settings da athena não são tocados
-    if (hooksSettings) parts.push(`--settings ${q(hooksSettings)}`);
+    if (hooksSettings) { flag('--settings'); val(hooksSettings); }
     if (bridge) {
-      parts.push(`--mcp-config ${q(bridge.mcpConfig(terminal.id, project.id))}`);
-      if (bridge.pluginDir) parts.push(`--plugin-dir ${q(bridge.pluginDir)}`);
+      flag('--mcp-config'); val(bridge.mcpConfig(terminal.id, project.id));
+      if (bridge.pluginDir) { flag('--plugin-dir'); val(bridge.pluginDir); }
     }
     // o texto de foco vai por arquivo (várias linhas e aspas não passam bem por linha de comando)
     const text = focusPrompt(project, engine, { bridge: !!bridge });
@@ -207,12 +212,12 @@ function launchSpec({ store, terminal, project, promptDir, hooksSettings = null,
       fs.mkdirSync(promptDir, { recursive: true, mode: 0o700 });
       const file = path.join(promptDir, `${terminal.id}.txt`);
       fs.writeFileSync(file, text, { mode: 0o600 });
-      parts.push(`--append-system-prompt-file ${q(file)}`);
-    } else parts.push(`--append-system-prompt ${q(text)}`);
-    if (initialPrompt) parts.push('--', q(String(initialPrompt).slice(0, 4000)));
+      flag('--append-system-prompt-file'); val(file);
+    } else { flag('--append-system-prompt'); val(text); }
+    if (initialPrompt) { flag('--'); val(String(initialPrompt).slice(0, 4000)); }
     // exec: o pty roda o claude direto (nada digitado no shell); ao sair do claude, fica um shell na mesma pasta
     const cwd = engine ? engine.path : (projDir || terminal.cwd || os.homedir());
-    return { cwd, exec: parts.join(' '), command: null, sessionId: sid, engine, warning };
+    return { cwd, exec: plat.renderCommand({ env, tokens: parts }, win), command: null, sessionId: sid, engine, warning };
   }
   return { cwd: terminal.cwd || projDir, command: token };
 }

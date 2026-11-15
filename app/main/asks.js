@@ -68,7 +68,8 @@ class AskBroker {
   // config MCP de UM terminal (o id do terminal vai no env do servidor; o Claude não precisa repassar o dele)
   configFor(termId, projectId) {
     const file = path.join(this.cfgDir, `${termId}.json`);
-    const cfg = { mcpServers: { bancada: { type: 'stdio', command: this.execPath, args: [this.serverFile],
+    // timeout: o cartão pode esperar o dia todo (v0.6: o tempo-sem-sinal de 30 min derrubava a pergunta)
+    const cfg = { mcpServers: { bancada: { type: 'stdio', command: this.execPath, args: [this.serverFile], timeout: 86400000,
       env: { ELECTRON_RUN_AS_NODE: '1', BANCADA_ASK_DIR: this.dir, BANCADA_TERM_ID: String(termId), BANCADA_PROJECT: String(projectId || '') } } } };
     writeAtomic(file, JSON.stringify(cfg, null, 1));
     return file;

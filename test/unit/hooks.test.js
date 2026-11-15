@@ -14,10 +14,10 @@ function mk() {
 }
 const emit = (dir, termId, ev, payload) => execFileSync('/bin/sh', [path.join(dir, 'emit.sh'), ev], { input: JSON.stringify(payload), env: { ...process.env, BANCADA_TERM_ID: termId } });
 
-test('settings.json tem os 5 hooks apontando para emit.sh (com aspas no caminho com espaço) e permissões fechadas', () => {
+test('settings.json tem os 9 hooks apontando para emit.sh (com aspas no caminho com espaço) e permissões fechadas', () => {
   const { dir, h } = mk();
   const s = JSON.parse(fs.readFileSync(h.settingsFile, 'utf8'));
-  assert.deepEqual(Object.keys(s.hooks).sort(), ['Notification', 'PostToolUse', 'PreToolUse', 'Stop', 'UserPromptSubmit']);
+  assert.deepEqual(Object.keys(s.hooks).sort(), ['Notification', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'PreToolUse', 'Stop', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit']);
   assert.match(s.hooks.Stop[0].hooks[0].command, /^\/bin\/sh '.*hooks dir-.*\/emit\.sh' Stop$/);
   assert.equal(fs.statSync(path.join(dir, 'emit.sh')).mode & 0o777, 0o700);
   assert.equal(fs.statSync(h.settingsFile).mode & 0o777, 0o600);
@@ -120,4 +120,26 @@ test('pendingBackground: tarefa parada pelo Claude (TaskStop) não conta; transc
   fs.writeFileSync(f, 'Command running in background with ID: aaaa1\nCommand running in background with ID: bbbb2\n{"name":"TaskStop","input":{"task_id":"bbbb2"}}\n');
   assert.equal(pendingBackground(f), 1);
   assert.equal(pendingBackground('/nao/existe.jsonl'), 0);
+});
+
+// ---- v0.6: eventos novos + cutucão do Escritório ----
+test('v0.6: SubagentStart traz agent_id/agent_type (formato real do 2.1.323); PermissionRequest = esperando você', () => {
+  const ev = parseLine('SubagentStart 1763000000 {"session_id":"s","transcript_path":"/x/s.jsonl","agent_id":"abbb020cfaa1a2c13","agent_type":"Explore","hook_event_name":"SubagentStart"}');
+  assert.equal(ev.event, 'SubagentStart'); assert.equal(ev.agent_id, 'abbb020cfaa1a2c13'); assert.equal(ev.agent_type, 'Explore');
+  assert.equal(nextState('working', { event: 'PermissionRequest' }), 'waiting');
+  assert.equal(nextState('waiting', { event: 'PostToolUseFailure' }), 'working');
+  assert.equal(nextState('working', { event: 'SubagentStart' }), null, 'subagente não muda o estado do terminal');
+});
+
+test('v0.6: todo evento chega no onEvent, mesmo quando o estado não muda (PreToolUse com o Claude já trabalhando)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks ev-'));
+  const evs = []; const states = [];
+  const h = new ClaudeHooks({ dir, onState: (e) => states.push(e.state), onEvent: (id, ev) => evs.push([id, ev.event]) });
+  h.setup();
+  emit(dir, 'tE', 'UserPromptSubmit', { session_id: 's' });
+  emit(dir, 'tE', 'PreToolUse', { session_id: 's', tool_name: 'Read' });
+  emit(dir, 'tE', 'SubagentStart', { session_id: 's', agent_id: 'a1234', agent_type: 'Explore' });
+  h.readFile('tE.log');
+  assert.deepEqual(evs.map(x => x[1]), ['UserPromptSubmit', 'PreToolUse', 'SubagentStart']);
+  assert.deepEqual(states, ['working'], 'só uma mudança de estado');
 });

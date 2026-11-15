@@ -1,6 +1,9 @@
 // Aba Mudanças (BP-2026-11-05-001 E2): o que mudou desde o último commit, diff por arquivo e commit dos SELECIONADOS.
 // Nunca faz push. Sempre execFile (sem shell) e "--" antes dos caminhos; cada caminho passa pela guarda do files.js.
 'use strict';
+// Segurança: um .git/config de repositório baixado pode mandar o git rodar programa (core.fsmonitor) num simples
+// status; a Bancada roda git sozinha em toda pasta de projeto. Esses -c valem mais que o config do repositório.
+const SAFE_GIT = ['-c', 'core.fsmonitor=false'];   // diff já vai com --no-ext-diff --no-textconv
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -11,7 +14,7 @@ const MAX_ENTRIES = 2000;
 
 function run(root, args, { timeout = 8000, maxBuffer = 4 * 1024 * 1024, input } = {}) {
   return new Promise((resolve) => {
-    const p = execFile('git', ['-C', root, ...args], { timeout, maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } },
+    const p = execFile('git', [...SAFE_GIT, '-C', root, ...args], { timeout, maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } },
       (err, stdout, stderr) => resolve({ ok: !err, out: String(stdout || ''), err: String(stderr || (err && err.message) || '') }));
     if (input != null) { p.stdin.end(input); }
   });
@@ -57,7 +60,7 @@ async function diff(root, rel) {
     const body = buf.subarray(0, MAX_DIFF).toString('utf8');
     return { text: `--- /dev/null\n+++ b/${rel}\n` + body.split('\n').map(l => '+' + l).join('\n'), truncated: buf.length > MAX_DIFF, code: entry.code };
   }
-  const r = await run(root, ['diff', 'HEAD', '--no-ext-diff', '--no-color', '--', rel], { maxBuffer: MAX_DIFF * 2 });
+  const r = await run(root, ['diff', 'HEAD', '--no-ext-diff', '--no-textconv', '--no-color', '--', rel], { maxBuffer: MAX_DIFF * 2 });
   let text = r.out;
   const truncated = text.length > MAX_DIFF;
   if (truncated) text = text.slice(0, MAX_DIFF);

@@ -20,6 +20,8 @@ function on(channel) {
 }
 
 contextBridge.exposeInMainWorld('bancada', {
+  // v0.7: 'win32' no Windows, 'darwin' no Mac (atalhos com Ctrl × ⌘ e textos "PC" × "Mac")
+  platform: process.platform,
   projects: {
     list: call('projects:list'), create: call('projects:create'), update: call('projects:update'),
     swapFocus: call('projects:swapFocus'), discover: call('projects:discover'), git: call('projects:git'),
@@ -51,6 +53,8 @@ contextBridge.exposeInMainWorld('bancada', {
     revoke: call('remote:revoke'), pairStart: call('remote:pairStart'), onClients: on('remote:clients') },
   asks: { list: call('asks:list'), answer: call('asks:answer'), dismiss: call('asks:dismiss'), onChanged: on('asks:changed') },
   activity: { list: call('activity:list'), onChanged: on('activity:changed') },
+  links: { resolve: call('links:resolve'), readMd: call('links:readMd'), openDir: call('links:openDir'), reveal: call('links:reveal'), openUrl: call('links:openUrl') },
+  servers: { list: call('servers:list'), refresh: call('servers:refresh'), edit: call('servers:edit'), onChanged: on('servers:changed') },
   claude: { states: call('claude:states'), seen: call('claude:seen'), context: call('claude:context'), onState: on('claude:state') },
   ui: { focusTerm: call('ui:focusTerm'), onGoTerminal: on('ui:goTerminal'), layoutGet: call('ui:layoutGet'), layoutSet: call('ui:layoutSet') },
   files: { roots: call('files:roots'), list: call('files:list'), read: call('files:read'), reveal: call('files:reveal'), openInCursor: call('files:openInCursor'),

@@ -139,3 +139,23 @@ test('pedido forjado (id do terminal no nome ≠ no conteúdo) é ignorado', () 
   broker.scan();
   assert.equal(broker.list().length, 0);
 });
+
+test('v0.6 T5.1: cartão esperando manda notifications/progress (com o token do pedido) e mcp.json pede timeout longo', async () => {
+  const { broker, t, p } = mk();
+  const cfgAll = JSON.parse(fs.readFileSync(broker.configFor(t.id, p.id), 'utf8')).mcpServers.bancada;
+  assert.equal(cfgAll.timeout, 86400000);
+  const proc = spawn(cfgAll.command, cfgAll.args, { env: { ...process.env, ...cfgAll.env, BANCADA_PROGRESS_MS: '250' }, stdio: ['pipe', 'pipe', 'inherit'] });
+  const msgs = []; let buf = '';
+  proc.stdout.on('data', (c) => { buf += c; let i; while ((i = buf.indexOf('\n')) >= 0) { msgs.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); } });
+  const send = (m) => proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n');
+  try {
+    send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't' } } });
+    send({ id: 2, method: 'tools/call', params: { name: 'perguntar', arguments: { pergunta: 'Qual?' }, _meta: { progressToken: 'tok-9' } } });
+    send({ id: 3, method: 'tools/call', params: { name: 'perguntar', arguments: { pergunta: 'Sem token?' } } });
+    await until(() => msgs.filter(m => m.method === 'notifications/progress').length >= 2, 4000);
+    const prog = msgs.filter(m => m.method === 'notifications/progress');
+    assert.ok(prog.every(m => m.params.progressToken === 'tok-9'), 'só o pedido com token recebe progresso');
+    assert.deepEqual(prog.slice(0, 2).map(m => m.params.progress), [1, 2], 'progresso cresce');
+    assert.ok(!msgs.some(m => m.id === 2), 'continua esperando a resposta');
+  } finally { proc.kill(); }
+});

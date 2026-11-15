@@ -4,6 +4,7 @@
 // Camadas: bind só no IP do tailnet · Host e Origin conferidos (anti DNS-rebinding / CSWSH) · pareamento por QR de uso
 // único (5 min) · token por aparelho (guardado só como hash) · revogação · canais de desktop bloqueados no remoto.
 'use strict';
+const plat = require('./platform');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -23,7 +24,11 @@ const BLOCKED = new Set(['app:pickFolder', 'app:openInCursor', 'app:importPrompt
   'remote:pairStart', 'remote:revoke', 'remote:devices', 'ui:focusTerm',
   'files:reveal', 'files:openInCursor', 'attach:clipboard', 'preview:open', 'ui:layoutSet',
   // instalar/atualizar/consertar/login de IA mexem no Mac e abrem o navegador do Mac: só no próprio Mac (o status pode)
-  'ai:install', 'ai:update', 'ai:cancel', 'ai:shellCheck', 'ai:fixShell', 'ai:firstProject']);
+  'ai:install', 'ai:update', 'ai:cancel', 'ai:shellCheck', 'ai:fixShell', 'ai:firstProject',
+  // v0.6: o celular não dispara consulta aos servidores nem abre o arquivo da lista no Mac
+  'servers:refresh', 'servers:edit',
+  // links: Finder e Safari são do Mac (no celular o link da web abre no próprio aparelho)
+  'links:openDir', 'links:reveal', 'links:openUrl']);
 // terminal de login das IAs (ai-login-*): nem abrir, nem digitar, nem ver pelo celular
 const isLoginTerm = (m) => /^pty:/.test(m.ch) && m.args && (/^ai-login-/.test(String(m.args[0] && typeof m.args[0] === 'object' ? m.args[0].id : m.args[0])));
 
@@ -33,6 +38,7 @@ const STATIC = {
   '/terminals.js': 'terminals.js', '/layout.js': 'layout.js', '/files-panel.js': 'files-panel.js', '/asks-ui.js': 'asks-ui.js', '/activity-ui.js': 'activity-ui.js', '/app.js': 'app.js', '/remote-bridge.js': 'remote-bridge.js', '/mobile.css': 'mobile.css',
   '/vendor/xterm.js': 'vendor/xterm.js', '/vendor/xterm.css': 'vendor/xterm.css', '/vendor/addon-fit.js': 'vendor/addon-fit.js',
   '/vendor/addon-web-links.js': 'vendor/addon-web-links.js', '/vendor/addon-unicode11.js': 'vendor/addon-unicode11.js', '/vendor/aurora-tokens.css': 'vendor/aurora-tokens.css',
+  '/office3d.js': 'office3d.js', '/md-view.js': 'md-view.js', '/vendor/three/three.module.js': 'vendor/three/three.module.js', '/vendor/three/three.core.js': 'vendor/three/three.core.js', '/vendor/three/OrbitControls.js': 'vendor/three/OrbitControls.js',
   '/assets/bancada-logo-128.png': 'assets/bancada-logo-128.png', '/apple-touch-icon.png': 'assets/bancada-logo-128.png',
 };
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png' };
@@ -71,7 +77,9 @@ class Remote {
 
   revoke(id) {
     this.store.db.prepare('DELETE FROM remote_devices WHERE id=?').run(id);
-    for (const c of this.clients) if (c.deviceId === id) c.ws.close(4001, 'revogado');
+    // revogar corta na hora: a partir daqui nada desse aparelho é atendido, e o socket cai mesmo que o cliente ignore o
+    // fechamento (antes ele ainda digitava por ~30 s)
+    for (const c of this.clients) if (c.deviceId === id) { c.revoked = true; try { c.ws.close(4001, 'revogado'); } catch {} setTimeout(() => { try { c.ws.terminate(); } catch {} }, 1000).unref(); }
     return true;
   }
 
@@ -85,7 +93,7 @@ class Remote {
       // Tailscale desligado: tenta de novo a cada 30 s (um timer só), nunca cai para a LAN
       clearTimeout(this.retry);
       this.retry = setTimeout(() => { this.retry = null; if (this.store.kvGet('remote_enabled', false)) this.start().catch(() => {}); }, 30000);
-      return Promise.resolve({ ...this.status(), error: 'Tailscale não está ligado neste Mac' });
+      return Promise.resolve({ ...this.status(), error: `Tailscale não está ligado neste ${plat.MACHINE}` });
     }
     this.ip = ip;
     this.server = http.createServer((req, res) => this.serve(req, res));
@@ -129,7 +137,8 @@ class Remote {
       // mesma tela do Mac; troca a ponte do Electron pela ponte remota e acrescenta o CSS de celular
       body = Buffer.from(String(body)
         .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
-        .replace('<script src="dom.js"></script>', '<script src="remote-bridge.js"></script>\n<script src="dom.js"></script>')
+        // data-host: o sistema do computador (o celular precisa para pôr aspas certas no caminho colado no terminal)
+        .replace('<script src="dom.js"></script>', `<script src="remote-bridge.js" data-host="${process.platform === 'win32' ? 'win32' : 'darwin'}"></script>\n<script src="dom.js"></script>`)
         .replace('<link rel="stylesheet" href="styles.css">', '<link rel="stylesheet" href="styles.css">\n<link rel="apple-touch-icon" href="/apple-touch-icon.png">\n<meta name="apple-mobile-web-app-title" content="Bancada">\n<link rel="stylesheet" href="mobile.css">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
     }
     res.writeHead(200, this.headers({ 'Content-Type': TYPES[path.extname(rel)] || 'application/octet-stream' }));
@@ -148,7 +157,7 @@ class Remote {
     const now = Date.now();
     this.pairFails = this.pairFails.filter(t => now - t < 10 * 60 * 1000);
     const deny = (code, msg) => { res.writeHead(code, this.headers({ 'Content-Type': 'application/json' })); res.end(JSON.stringify({ error: msg })); };
-    if (this.pairFails.length >= PAIR_FAIL_LIMIT) return deny(429, 'muitas tentativas; gere um QR novo no Mac daqui a pouco');
+    if (this.pairFails.length >= PAIR_FAIL_LIMIT) return deny(429, `muitas tentativas; gere um QR novo no ${plat.MACHINE} daqui a pouco`);
     if (req.headers.origin && req.headers.origin !== `http://${this.ip}:${this.port}`) return deny(403, 'origem recusada');
     let raw = '';
     req.on('data', (d) => { raw += d; if (raw.length > 4096) req.destroy(); });
@@ -187,6 +196,7 @@ class Remote {
   }
 
   async onMessage(client, data) {
+    if (client.revoked) return;
     let m; try { m = JSON.parse(String(data)); } catch { return; }
     if (!m || typeof m.ch !== 'string' || !Array.isArray(m.args)) return;
     // escrita/resize de terminal: sem resposta (alta frequência)

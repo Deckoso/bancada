@@ -4,6 +4,7 @@
 // Memória: só os cartões abertos (máx. 20, limite do processo principal) e um rascunho por cartão, apagado ao responder.
 'use strict';
 (function () {
+  const ENTER = window.bancada && window.bancada.platform === 'win32' ? 'Ctrl+Enter' : '⌘↩';
   const { h, toast } = window.UI;
   const B = window.bancada;
   let asks = [];
@@ -122,7 +123,7 @@
   function buildPergunta(a, more) {
     const d = draft(a); const { pergunta, opcoes, multipla, texto_livre, etapa, resumo } = a.args;
     let el;
-    const ta = texto_livre ? h('textarea', { class: 'ask-text', rows: '2', maxlength: '4000', placeholder: opcoes.length ? 'Ou escreva do seu jeito… (⌘↩ envia)' : 'Sua resposta… (⌘↩ envia)', oninput: (e) => { d.texto = e.target.value; } }) : null;
+    const ta = texto_livre ? h('textarea', { class: 'ask-text', rows: '2', maxlength: '4000', placeholder: opcoes.length ? `Ou escreva do seu jeito… (${ENTER} envia)` : `Sua resposta… (${ENTER} envia)`, oninput: (e) => { d.texto = e.target.value; } }) : null;
     if (ta) ta.value = d.texto;
     const answer = () => send(a, { acao: 'responder', escolhas: [...d.sel], texto: d.texto }, el);
     const optEls = opcoes.map((o, k) => h('button', { class: `ask-choice ${d.sel.has(k) ? 'on' : ''}`, onclick: () => {

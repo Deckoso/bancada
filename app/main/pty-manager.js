@@ -6,6 +6,7 @@ const pty = require('node-pty');
 const os = require('os');
 const fs = require('fs');
 const { execFile } = require('child_process');
+const plat = require('./platform');
 
 const MAX_TERMINALS = 12;
 const FLUSH_MS = 16;
@@ -16,7 +17,8 @@ const LOOPBACK_HINT = /localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]/;
 const REPLAY = 256 * 1024;             // últimos 256 KB de saída por terminal (para o celular que entra depois)
 
 class PtyManager {
-  constructor({ send, shell = process.env.SHELL || '/bin/zsh', max = MAX_TERMINALS, envPath = null } = {}) {
+  constructor({ send, shell = plat.defaultShell(), max = MAX_TERMINALS, envPath = null, win = plat.IS_WIN } = {}) {
+    this.win = win;
     this.send = send;            // (channel, payload) => void
     this.envPath = envPath;      // (PATH) => PATH com ~/.local/bin na frente (ai-tools): acha as IAs mesmo com .zshrc errado
     this.shell = shell;
@@ -47,13 +49,14 @@ class PtyManager {
       e.code = 'PTY_LIMIT'; throw e;
     }
     const dir = cwd && safeDir(cwd) ? cwd : os.homedir();
-    const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', BANCADA_PROJECT: String(projectId || ''), BANCADA_TERMINAL: String(name || ''), BANCADA_TERM_ID: String(id) };
+    const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', FORCE_HYPERLINK: '1', BANCADA_PROJECT: String(projectId || ''), BANCADA_TERMINAL: String(name || ''), BANCADA_TERM_ID: String(id) };
     delete env.ELECTRON_RUN_AS_NODE;
-    if (this.envPath) env.PATH = this.envPath(env.PATH);
+    if (this.envPath) plat.setPath(env, this.envPath(plat.getPath(env, this.win)), this.win);
     // não herdar marcas de uma sessão do Claude que tenha aberto a Bancada (desligariam o histórico da conversa nova)
     for (const k of Object.keys(env)) if (k === 'CLAUDECODE' || k.startsWith('CLAUDE_CODE_')) delete env[k];
     // oneShot (login das IAs): roda o comando e acaba; o normal deixa um shell na pasta quando o programa sai
-    const args = exec ? (oneShot ? ['-l', '-c', exec] : ['-l', '-i', '-c', `${exec}; exec ${this.shell} -l`]) : ['-l'];
+    // Windows: PowerShell (com UTF-8); o comando vem montado em sintaxe do PowerShell (platform.renderCommand)
+    const args = plat.shellArgs({ shell: this.shell, exec, oneShot }, this.win);
     const proc = pty.spawn(this.shell, args, { name: 'xterm-256color', cols, rows, cwd: dir, env });
     const t = { proc, projectId, name, cwd: dir, pending: '', timer: null, paused: false, tail: '', cols, rows, urls: [] };
     this.terms.set(id, t);
@@ -102,7 +105,9 @@ class PtyManager {
   // Enviar um prompt da fila para o terminal (D4): só por clique do usuário, como colagem (bracketed paste),
   // sem Enter automático — o usuário confere e aperta Enter.
   // programa em primeiro plano no terminal (node-pty): 'zsh', ou '2.1.319' para o Claude (o binário tem o nome da versão)
-  foreground(id) { const t = this.terms.get(id); try { return t ? String(t.proc.process || '') : ''; } catch { return ''; } }
+  // No Windows o node-pty não sabe o programa em primeiro plano (devolve sempre o shell): '' → a Bancada não cola nada
+  // às cegas (resposta de cartão órfão não é enviada).
+  foreground(id) { if (this.win) return ''; const t = this.terms.get(id); try { return t ? String(t.proc.process || '') : ''; } catch { return ''; } }
 
   paste(id, text) {
     if (typeof text !== 'string' || !text.length || text.length > MAX_PASTE) return false;
@@ -126,9 +131,16 @@ class PtyManager {
     if (t.timer) clearTimeout(t.timer);
     t.killed = true;
     const pid = t.proc.pid;
-    try { t.proc.kill(); } catch {}
-    // garante que nada do terminal fica rodando (claude, npm run dev…): HUP para a sessão inteira do pty
-    if (pid) execFile('pkill', ['-HUP', '-s', String(pid)], () => {});
+    // garante que nada do terminal fica rodando (claude, npm run dev…).
+    // Windows: mata a árvore a partir do shell ANTES de fechar o console (depois o elo pai→filho se perde)
+    if (this.win) {
+      const close = () => { try { t.proc.kill(); } catch {} };
+      if (pid) execFile(plat.sys32('taskkill.exe'), ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, close); else close();
+    } else {
+      try { t.proc.kill(); } catch {}
+      // Mac: HUP para a sessão inteira do pty
+      if (pid) execFile('pkill', ['-HUP', '-s', String(pid)], () => {});
+    }
     this.terms.delete(id);
   }
 

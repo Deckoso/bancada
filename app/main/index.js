@@ -15,9 +15,12 @@ const { EngineWatch, launchSpec } = require('./engines');
 const { Remote } = require('./remote');
 const { ClaudeHooks } = require('./hooks');
 const { Activity } = require('./activity');
+const { Servers } = require('./servers');
 const { AskBroker } = require('./asks');
 const { AiTools, IDS: AI_IDS, firstProjectDir } = require('./ai-tools');
 const files = require('./files');
+const links = require('./links');
+const { execFile } = require('child_process');
 const gitview = require('./gitview');
 const attachments = require('./attachments');
 const contextMeter = require('./context-meter');
@@ -26,14 +29,17 @@ const { clipboard } = require('electron');
 const QRCode = require('qrcode');
 const git = require('./git');
 const v = require('./validate');
+const plat = require('./platform');
 
 const RENDERER = path.join(__dirname, '..', 'renderer');
 const USER_DIR = process.env.BANCADA_DATA_DIR || path.join(app.getPath('appData'), 'Bancada');
 const PROMPTPAD_FILE = path.join(os.homedir(), 'Library', 'Application Support', 'PromptPad', 'notes.json');
 // Pasta de trabalho: ~/Documents e as pastas logo abaixo dela (sem caminho fixo de ninguém). Teto de 60 para não varrer demais.
 const PROJECT_DIR_NAMES = ['PROJETOS', 'Projetos', 'Projects', 'projects'];
+// Documentos do usuário (no Windows pode estar no OneDrive: o Electron sabe onde)
+function docsDir() { try { return app.getPath('documents'); } catch { return path.join(os.homedir(), 'Documents'); } }
 function workRoots() {
-  const docs = path.join(os.homedir(), 'Documents');
+  const docs = docsDir();
   let ents = []; try { ents = fs.readdirSync(docs, { withFileTypes: true }); } catch {}
   const subs = ents.filter(e => e.isDirectory() && !e.name.startsWith('.') && !PROJECT_DIR_NAMES.includes(e.name)).slice(0, 60).map(e => path.join(docs, e.name));
   return [docs, ...subs];
@@ -51,6 +57,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); }
 
 let ai, store, ptys, reader, summarizer, morning, engines, remote, hooks, asks, mainWin, captureWin, tray;
 let activity = null;
+let servers = null;   // v0.6: sala de servidores do Escritório
 const initialPrompts = new Map();   // terminal -> 1ª mensagem do Claude (entrevista guiada); usada uma vez
 const PLUGIN_DIR_NAME = 'plugin';
 let focusedTerm = null;          // terminal que o usuário está olhando no Mac (para não avisar dele)
@@ -60,17 +67,26 @@ let awakeId = null;
 const handlers = new Map();   // mesmos handlers do IPC, usados também pelo acesso remoto
 let activeProjectId = 'inbox';
 
+// v0.6: link da web clicado na Bancada abre no Safari; sem Safari, cai no navegador padrão
+function openInSafari(url) {
+  const u = links.httpUrl(url); if (!u) return false;
+  if (plat.IS_WIN) { shell.openExternal(u); return true; }   // Windows: navegador padrão
+  execFile('/usr/bin/open', ['-a', 'Safari', u], (err) => { if (err) shell.openExternal(u); });
+  return true;
+}
+
 // ---------- segurança global ----------
 app.on('web-contents-created', (_e, wc) => {
   wc.setWindowOpenHandler(({ url }) => {
     if (preview.previews.has(wc)) { preview.onWindowOpen(wc, url); return { action: 'deny' }; }
-    if (/^https?:\/\//.test(url)) shell.openExternal(url);   // links do terminal abrem no navegador
+    if (/^https?:\/\//.test(url)) openInSafari(url);   // links do terminal abrem no Safari (v0.6)
     return { action: 'deny' };
   });
   wc.on('will-navigate', (ev, url) => {
     // a janela de prévia navega só dentro do próprio Mac (loopback); as nossas, só nos nossos arquivos
     if (preview.previews.has(wc)) { if (!preview.allowNavigate(url)) ev.preventDefault(); return; }
-    if (!url.startsWith('file://')) ev.preventDefault();
+    // só as nossas páginas: soltar um .html qualquer na janela trocava a tela por ele
+    if (!isOurUrl(url)) ev.preventDefault();
   });
   wc.on('will-redirect', (ev, url) => { if (preview.previews.has(wc) && !preview.allowNavigate(url)) ev.preventDefault(); });
   wc.on('will-attach-webview', ev => ev.preventDefault());
@@ -88,9 +104,14 @@ function secureWebPrefs() {
   };
 }
 
-function isOurFrame(event) {
-  const url = event.senderFrame && event.senderFrame.url;
-  return typeof url === 'string' && url.startsWith('file://') && decodeURIComponent(new URL(url).pathname).startsWith(RENDERER);
+function isOurFrame(event) { return isOurUrl(event.senderFrame && event.senderFrame.url); }
+function isOurUrl(url) {
+  if (typeof url !== 'string' || !url.startsWith('file://')) return false;
+  // fileURLToPath: no Windows "file:///C:/…/renderer/x.html" vira "C:\…\renderer\x.html" (o pathname cru era "/C:/…" e
+  // nunca batia: toda chamada da tela do PC voltava "origem recusada"). Windows sem caixa.
+  let p; try { p = require('url').fileURLToPath(url); } catch { return false; }
+  const root = path.resolve(RENDERER) + path.sep;
+  return plat.IS_WIN ? p.toLowerCase().startsWith(root.toLowerCase()) : p.startsWith(root);
 }
 
 // Registra handler IPC que só aceita chamadas das nossas páginas e devolve {ok,data}|{ok:false,error,code}
@@ -166,12 +187,16 @@ function translateNotice(m) {
 function createMain() {
   mainWin = new BrowserWindow({
     width: 1480, height: 920, minWidth: 980, minHeight: 600,
-    title: 'Bancada', titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 14 },
-    backgroundColor: '#0a0a0c', show: false,
+    title: 'Bancada', backgroundColor: '#0a0a0c', show: false,
+    // Mac: barra de título embutida (semáforos sobre a tela) · Windows: moldura normal, sem barra de menu
+    ...(plat.IS_WIN ? { autoHideMenuBar: true, icon: path.join(RENDERER, 'assets', 'bancada-logo.png') } : { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 14 } }),
     webPreferences: secureWebPrefs(),
   });
   mainWin.loadFile(path.join(RENDERER, 'index.html'));
-  mainWin.once('ready-to-show', () => { if (!process.env.BANCADA_HIDDEN) mainWin.show(); });
+  // --hidden: aberto pelo Windows ao ligar o PC (no Mac o openAsHidden faz isso)
+  mainWin.once('ready-to-show', () => { if (!process.env.BANCADA_HIDDEN && !process.argv.includes('--hidden')) mainWin.show(); });
+  // v0.6: janela escondida/minimizada → a sala de servidores consulta 5× menos
+  for (const [ev, v] of [['hide', false], ['minimize', false], ['show', true], ['restore', true]]) mainWin.on(ev, () => { if (servers) servers.setVisible(v); });
   mainWin.on('close', (e) => {
     // fechar a janela não mata os terminais: a Bancada continua na bandeja
     if (!app.isQuitting) { e.preventDefault(); mainWin.hide(); }
@@ -181,7 +206,9 @@ function createMain() {
 function createCapture() {
   captureWin = new BrowserWindow({
     width: 620, height: 168, frame: false, resizable: false, show: false, alwaysOnTop: true,
-    skipTaskbar: true, transparent: true, vibrancy: 'hud', visualEffectState: 'active',
+    skipTaskbar: true,
+    // vidro fosco só existe no Mac; no Windows a caixa é opaca
+    ...(plat.IS_WIN ? { backgroundColor: '#1c1c22' } : { transparent: true, vibrancy: 'hud', visualEffectState: 'active' }),
     webPreferences: secureWebPrefs(),
   });
   captureWin.loadFile(path.join(RENDERER, 'capture.html'));
@@ -209,14 +236,15 @@ function showMain() {
 }
 
 function createTray() {
-  const iconPath = path.join(RENDERER, 'assets', 'trayTemplate.png');
-  const img = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
-  img.setTemplateImage(true);
+  // Mac: ícone "molde" preto que o sistema pinta · Windows: o logo colorido (o molde ficaria invisível na barra escura)
+  const iconPath = path.join(RENDERER, 'assets', plat.IS_WIN ? 'bancada-logo-128.png' : 'trayTemplate.png');
+  let img = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+  if (plat.IS_WIN) img = img.resize({ width: 16, height: 16 }); else img.setTemplateImage(true);
   tray = new Tray(img);
   tray.setToolTip('Bancada');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Abrir a Bancada', click: showMain },
-    { label: 'Anotar (⌥Space)', click: toggleCapture },
+    { label: plat.IS_WIN ? 'Anotar (Alt+Espaço)' : 'Anotar (⌥Space)', click: toggleCapture },
     { type: 'separator' },
     { label: 'Sair', click: () => { app.isQuitting = true; app.quit(); } },
   ]));
@@ -350,13 +378,13 @@ function registerIpc() {
   handle('files:list', (pid, idx, rel) => files.list(rootOf(pid, idx), rel == null ? '' : v.text(rel, 2048)));
   handle('files:read', (pid, idx, rel) => files.read(rootOf(pid, idx), v.text(rel, 2048)));
   handle('files:reveal', (pid, idx, rel) => { shell.showItemInFolder(files.resolveInside(rootOf(pid, idx), v.text(rel, 2048))); return true; });
-  handle('files:openInCursor', (pid, idx, rel) => { const abs = files.resolveInside(rootOf(pid, idx), v.text(rel, 2048)); return shell.openExternal(`cursor://file${encodeURI(abs)}`); });
+  handle('files:openInCursor', (pid, idx, rel) => { const abs = files.resolveInside(rootOf(pid, idx), v.text(rel, 2048)); return shell.openExternal(plat.cursorUrl(abs)); });
   handle('git:status', (pid, idx) => gitview.status(rootOf(pid, idx)));
   handle('git:diff', (pid, idx, rel) => gitview.diff(rootOf(pid, idx), v.text(rel, 2048)));
   handle('git:commit', (pid, idx, list, msg) => gitview.commit(rootOf(pid, idx), v.strList(list, 500, 2048), v.text(msg, 5000)));
 
   // ---- imagens no terminal (E4) ----
-  const pasteFile = (id, file) => { ptys.paste(id, "'" + file.replace(/'/g, "'\\''") + "' "); return { file }; };
+  const pasteFile = (id, file) => { ptys.paste(id, plat.quotePath(file) + ' '); return { file }; };
   handle('attach:clipboard', (id) => {
     const img = clipboard.readImage();
     if (img.isEmpty()) { const e = new Error('a área de transferência não tem imagem'); e.code = 'NO_IMAGE'; throw e; }
@@ -378,7 +406,7 @@ function registerIpc() {
   handle('ai:fixShell', () => ai.fixShell());
   // leigo: cria ~/Documents/Bancada/Meu primeiro projeto e o projeto na Bancada (em foco se couber)
   handle('ai:firstProject', () => {
-    const dir = firstProjectDir(ai.home);
+    const dir = firstProjectDir(ai.home, process.env.BANCADA_AI_HOME ? undefined : docsDir());
     const had = store.listProjects().find(p => (p.paths || []).includes(dir));
     if (had) return had;
     try { return store.createProject({ name: 'Meu primeiro projeto', kind: 'software', paths: [dir], status: 'focus' }); }
@@ -388,6 +416,21 @@ function registerIpc() {
   handle('ui:layoutSet', (tree) => { store.kvSet('pane_tree', v.paneTree(tree)); return true; });
   handle('terminals:byIds', (ids) => v.idList(ids, 8).map(id => store.getTerminal(id)).filter(Boolean));
   handle('activity:list', () => (activity ? activity.list() : {}));
+  // v0.6: links no terminal (caminho de pasta/arquivo .md/arquivo, http). Caminho relativo: pasta do terminal e do projeto.
+  handle('links:resolve', (termId, list) => {
+    const row = store.getTerminal(v.text(termId, 120)); const p = row ? store.getProject(row.project_id) : null;
+    const live = ptys.list().find(t => t.id === termId);
+    const bases = [...new Set([live && live.cwd, ...((p && p.paths) || [])].filter(Boolean))];
+    return links.resolveMany(Array.isArray(list) ? list.slice(0, 24).map(c => ({ at: Number(c && c.at) || 0, raw: v.text(String((c && c.raw) || ''), 600) })) : [], bases);
+  });
+  handle('links:readMd', (abs) => links.readMd(v.text(abs, 4096)));
+  // pasta abre no Finder; pacote (.app etc.) só é MOSTRADO — abrir executaria o programa (texto do modelo vira clique)
+  handle('links:openDir', (abs) => { const a = v.text(abs, 4096); if (links.kindOf(a) !== 'dir') throw new Error('pasta não encontrada'); if (links.isBundle(a)) shell.showItemInFolder(a); else shell.openPath(a); return true; });
+  handle('links:reveal', (abs) => { const a = v.text(abs, 4096); if (!links.kindOf(a)) throw new Error('arquivo não encontrado'); shell.showItemInFolder(a); return true; });
+  handle('links:openUrl', (url) => openInSafari(v.text(url, 8192)));
+  handle('servers:list', () => (servers ? servers.list() : { servers: [], errors: [] }));
+  handle('servers:refresh', () => { if (servers) servers.run(); return true; });
+  handle('servers:edit', () => { if (servers) shell.openPath(servers.file); return true; });
   handle('claude:seen', (id) => { hooks.seen(v.id(id)); return true; });
   handle('ui:focusTerm', (id) => { focusedTerm = id ? v.id(id) : null; if (focusedTerm) hooks.seen(focusedTerm); return true; });
   handle('pty:paste', (id, text) => ptys.paste(v.id(id), v.text(text, 64 * 1024)));
@@ -440,7 +483,7 @@ function registerIpc() {
     const r = await dialog.showOpenDialog(mainWin, { properties: ['openDirectory'] });
     return r.canceled ? null : r.filePaths[0];
   });
-  handle('app:openInCursor', (dir) => { const d = v.dir(dir); return shell.openExternal(`cursor://file${encodeURI(d)}`); });
+  handle('app:openInCursor', (dir) => { const d = v.dir(dir); return shell.openExternal(plat.cursorUrl(d)); });
 
   handle('capture:submit', ({ text, type }) => {
     const r = routeCapture(v.text(text, 20000));
@@ -517,6 +560,11 @@ function smoke(outDir) {
 }
 
 // ---------- ciclo de vida ----------
+// Windows: o menu padrão do Electron prende Ctrl+R (recarrega a tela), Ctrl+W, Ctrl+C… — atalhos que o terminal precisa
+// (Ctrl+C interrompe o Claude, Ctrl+R busca no histórico). Sem menu; copiar/colar fica com o terminal e os campos.
+// O id do app é o que faz os avisos do Windows aparecerem (e com o nome certo).
+if (plat.IS_WIN) { Menu.setApplicationMenu(null); app.setAppUserModelId('com.mcpp.bancada'); }
+
 app.whenReady().then(() => {
   // CSP também por cabeçalho (além da meta tag de cada página)
   session.defaultSession.webRequest.onHeadersReceived((d, cb) => {
@@ -527,9 +575,10 @@ app.whenReady().then(() => {
   fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
   store = open(path.join(USER_DIR, 'bancada.db'));
   fs.mkdirSync(ANEXOS_DIR, { recursive: true, mode: 0o700 });
-  hooks = new ClaudeHooks({ dir: path.join(USER_DIR, 'hooks'), onState: onClaudeState });
+  hooks = new ClaudeHooks({ dir: path.join(USER_DIR, 'hooks'), onState: onClaudeState, onEvent: (id, ev) => { if (activity) activity.poke(id, ev); } });
   hooks.setup(); hooks.start();
   activity = new Activity({ statsFile: path.join(USER_DIR, 'hooks', 'duracoes.json'), onChange: (x) => send('activity:changed', x) }).start();
+  servers = new Servers({ file: path.join(USER_DIR, 'servidores.json'), onChange: (x) => send('servers:changed', x) }).start();
   copyPlugin(path.join(__dirname, '..', 'plugin'), path.join(USER_DIR, PLUGIN_DIR_NAME));
   try { attachments.cleanup(ANEXOS_DIR); } catch {}
   // BANCADA_AI_HOME: só para teste (instalar numa pasta isolada sem tocar no ~ de verdade)
@@ -539,7 +588,7 @@ app.whenReady().then(() => {
     onItems: (pid) => send('data:changed', { kind: 'items', project_id: pid }),
     // a conversa que perguntou morreu: a resposta vai como mensagem (colagem + Enter) — SÓ se o Claude ainda é o programa
     // em primeiro plano. Se o terminal voltou a ser shell, colar + Enter executaria o texto (que traz itens escritos pelo
-    // Claude) como comando: pentest 2026-11-06 F-001. Nesse caso não envia nada.
+    // Claude) como comando. Nesse caso não envia nada.
     paste: (id, text) => isClaudeFg(ptys.foreground(id)) && ptys.paste(id, text) && !!setTimeout(() => { if (isClaudeFg(ptys.foreground(id))) ptys.write(id, '\r'); }, 120) }).setup();
   asks.start();
   const resumoDir = path.join(USER_DIR, 'resumo');
@@ -563,7 +612,7 @@ app.whenReady().then(() => {
   morning.start();
   if (store.kvGet('remote_enabled', false)) remote.start().catch(() => {});
 
-  if (app.isPackaged && store.kvGet('login_item', true)) app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
+  if (app.isPackaged && store.kvGet('login_item', true)) app.setLoginItemSettings(plat.IS_WIN ? { openAtLogin: true, args: ['--hidden'] } : { openAtLogin: true, openAsHidden: true });
   app.on('activate', showMain);
   app.on('second-instance', showMain);
 });
@@ -578,6 +627,7 @@ app.on('will-quit', () => {
   if (engines) engines.stop();
   if (hooks) hooks.stop();
   if (activity) activity.stop();
+  if (servers) servers.stop();
   if (asks) asks.stop();
   if (remote) remote.stop();
   if (store) store.close();

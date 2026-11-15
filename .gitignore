@@ -8,3 +8,4 @@ app/renderer/vendor/
 *.db-shm
 dist-next/
 dist-share/
+dist-win/

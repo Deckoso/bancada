@@ -6,13 +6,14 @@
 
 **Os seus terminais de IA, organizados por projeto — e você nunca perde onde parou.**
 
-App de Mac para quem programa com Claude Code, Codex e outras IAs no terminal: cada projeto tem seus terminais,
+App de Mac e Windows para quem programa com Claude Code, Codex e outras IAs no terminal: cada projeto tem seus terminais,
 a Bancada mostra qual IA está trabalhando, qual está esperando você e qual terminou — e quando a IA precisa de
 uma decisão, você responde por botões, no Mac ou no celular.
 
 ![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)
+![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011%20x64-0078d4?logo=windows)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.5.0-7c5cff)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.0-7c5cff)
 
 <img src="docs/img/principal.png" width="860" alt="Bancada: projetos em foco, dois terminais lado a lado, cartões esperando resposta e o painel do projeto">
 
@@ -43,7 +44,8 @@ uma decisão, você responde por botões, no Mac ou no celular.
 
 ### O que ela está fazendo agora (v0.5)
 - **Faixa de atividade** no topo de cada terminal: ferramenta em andamento e há quanto tempo, tarefas em segundo plano com a última linha da saída, agentes ativos, **quanto falta** (pelo andamento ou pela mediana das vezes anteriores) e aviso de "sem sinal".
-- **Escritório**: uma sala isométrica onde cada Claude é um personagem — na mesa trabalhando, em pé esperando você, na máquina com tarefa em segundo plano; agentes entram pela porta e saem quando terminam. Clicar leva ao terminal.
+- **Clicar no que o Claude escreve (v0.6)**: caminho de pasta abre no Finder, `.md` abre formatado na prévia, link da web abre no Safari. Funciona até com espaço no nome e com caminho quebrado em várias linhas.
+- **Escritório 3D (v0.6)**: maquete que você gira e aproxima. Cada Claude é um boneco que digita, lê, pesquisa ou roda comando conforme a ferramenta, levanta a mão quando espera você e vai ao sofá quando para. Os agentes sentam na sala de reunião de vidro. Tem quadro de pendências, relógio, e uma **sala de servidores** com luzes de status (HTTP/TCP/ping saindo do Mac, sem login). Reage na hora pelos hooks do Claude Code e não gasta token nenhum. Clicar no boneco leva ao terminal.
 
 ### Responder por botões (v0.4)
 - **Cartões dentro do painel do terminal.** O Claude da Bancada ganha três ferramentas (servidor MCP próprio, sem dependências):
@@ -88,6 +90,12 @@ uma decisão, você responde por botões, no Mac ou no celular.
 
 ## Instalar
 
+### Windows (0.7)
+
+Baixe o `Bancada-Setup-…-windows-x64.exe` em [Releases](https://github.com/Deckoso/bancada/releases) e abra. A instalação é só para o seu usuário, sem senha de administrador. O instalador não tem assinatura: no aviso "O Windows protegeu o computador", clique em **Mais informações → Executar assim mesmo**. Atalhos, diferenças e limitações estão em [docs/WINDOWS.md](docs/WINDOWS.md).
+
+### Mac
+
 Requer macOS em Apple Silicon e Node.js 20+ para compilar.
 
 ```bash
@@ -122,7 +130,8 @@ O guia completo, com todas as funções, prints e atalhos, está em **[docs/BANC
 
 ## Privacidade e segurança
 
-- **Tudo local.** Banco SQLite em `~/Library/Application Support/Bancada/`. Nenhuma telemetria.
+- **Tudo local.** Banco SQLite em `~/Library/Application Support/Bancada/` (Windows: `%APPDATA%\Bancada`). Nenhuma telemetria.
+- **Exceção que você controla:** o resumo de "onde parei" usa o **seu** Claude (`claude -p`, modelo haiku, até 40 por dia). Trechos das conversas do projeto (Claude e Codex) vão para a Anthropic pela sua conta. Ele vem ligado e pode ser desligado em **Ajustes → Resumo por IA**.
 - A ponte de perguntas não abre porta: pedidos e respostas são arquivos em pastas `0700` do seu usuário.
 - Uma resposta de cartão só é colada no terminal se o Claude ainda estiver em primeiro plano nele (nunca num shell).
 - Fechar um terminal ou o app encerra a sessão inteira do pty — nada fica rodando escondido.
@@ -143,3 +152,5 @@ test/unit/       # node:test, rodando no próprio Electron
 ## Licença
 
 [MIT](LICENSE)
+
+Terceiros: [three.js](https://github.com/mrdoob/three.js) (MIT, © 2010–2026 three.js authors), copiado para `app/renderer/vendor/three/` com a licença original.

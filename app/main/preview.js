@@ -16,7 +16,7 @@ function normalize(url) { const u = new URL(url); if (u.hostname === '0.0.0.0') 
 
 let configured = false;
 function open(url) {
-  if (!isLoopback(url)) { const e = new Error('só endereços do próprio Mac (localhost)'); e.code = 'INVALID'; throw e; }
+  if (!isLoopback(url)) { const e = new Error(`só endereços do próprio ${require('./platform').MACHINE} (localhost)`); e.code = 'INVALID'; throw e; }
   const ses = session.fromPartition('bancada-preview');
   if (!configured) {
     ses.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
@@ -36,7 +36,7 @@ function open(url) {
 function allowNavigate(url) { return isLoopback(url); }
 function onWindowOpen(wc, url) {
   if (isLoopback(url)) { wc.loadURL(normalize(url)); return; }
-  if (/^https?:\/\//.test(url)) shell.openExternal(url);
+  if (/^https?:\/\//.test(url)) { if (process.platform === 'win32') shell.openExternal(url); else require('child_process').execFile('/usr/bin/open', ['-a', 'Safari', url], (err) => { if (err) shell.openExternal(url); }); }
 }
 
 module.exports = { open, previews, isLoopback, allowNavigate, onWindowOpen };

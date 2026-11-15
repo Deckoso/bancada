@@ -10,6 +10,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const plat = require('./platform');
 
 const FIRST_TAIL = 1024 * 1024;       // primeira leitura: só o último 1 MB da conversa
 const CHUNK = 512 * 1024;
@@ -86,12 +87,11 @@ function progressOf(line) {
 }
 
 function lastLine(file) {
-  if (typeof file !== 'string' || !OUTPUT_RE.test(file) || file.includes('/../')) return null;
+  if (typeof file !== 'string' || /[\\/]\.\.[\\/]/.test(file) || !(OUTPUT_RE.test(file) || (plat.IS_WIN && plat.OUTPUT_RE_WIN.test(file)))) return null;
   try {
     // o caminho real (sem link simbólico no arquivo nem nas pastas) também tem de estar na pasta de tarefas do Claude deste usuário
     const real = fs.realpathSync(file);
-    const uid = typeof process.getuid === 'function' ? process.getuid() : null;
-    if (!OUTPUT_RE.test(real) || (uid !== null && !real.includes(`/claude-${uid}/`))) return null;
+    if (!plat.taskOutputOk(real)) return null;
     const st = fs.statSync(real);
     if (!st.isFile()) return null;
     file = real;
@@ -181,7 +181,7 @@ class Tracker {
         const txt = resultText(b.content);
         const bgId = p ? launchId(p.name, txt) : null;
         if (bgId && p) {
-          const out = /Output is being written to: (\S+?\.output)/.exec(txt);
+          const out = /Output is being written to: ([^\n"]{1,500}?\.output)/.exec(txt);
           const kind = (p.name === 'Agent' || p.name === 'Task') ? 'agent' : p.name === 'Workflow' ? 'workflow' : p.name === 'Monitor' ? 'monitor' : 'bash';
           this.tasks.set(bgId[1], { id: bgId[1], kind, verb: p.verb, what: p.what, key: p.key, at: p.at, output: out ? out[1] : null, toolUseId: p.id });
           if (this.tasks.size > MAX_TASKS) this.tasks.delete(this.tasks.keys().next().value);
@@ -296,7 +296,7 @@ class Activity {
     this.flushTimer = setInterval(() => this.stats.flush(), 60 * 1000);
     return this;
   }
-  stop() { clearInterval(this.timer); clearInterval(this.flushTimer); this.timer = this.flushTimer = null; this.stats.flush(); }
+  stop() { if (this.pokes) { for (const t of this.pokes.values()) clearTimeout(t); this.pokes.clear(); } clearInterval(this.timer); clearInterval(this.flushTimer); this.timer = this.flushTimer = null; this.stats.flush(); }
 
   setTerm(id, { transcript, state }) {
     if (state === 'off') { this.terms.delete(id); this.last.delete(id); this.onChange({ id, activity: null }); this.gc(); return; }
@@ -335,6 +335,16 @@ class Activity {
     if (this.last.get(id) === sig) return;
     this.last.set(id, sig);
     this.onChange({ id, activity });
+  }
+
+  // v0.6: um evento de hook chegou para este terminal — relê já (com folga de 120 ms para o Claude terminar de gravar a
+  // transcrição e para juntar rajadas de eventos numa leitura só). Um timer por terminal, nunca acumula.
+  poke(id, ev) {
+    const x = this.terms.get(id);
+    if (!x) return;
+    this.pokes = this.pokes || new Map();
+    if (this.pokes.has(id)) return;
+    this.pokes.set(id, setTimeout(() => { this.pokes.delete(id); this.tickOne(id); }, 120));
   }
 
   tick() {

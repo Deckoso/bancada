@@ -5,14 +5,18 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const plat = require('./platform');
 
 const MAX_LOG = 256 * 1024;
 const STALE_MS = 10 * 60 * 1000;      // trabalhando sem evento por 10 min → "?" (ex.: Esc no meio, que não dispara Stop)
 const BG_STALE_MS = 3 * 60 * 60 * 1000; // "esperando tarefa" sem notícia por 3 h → "?" (tarefa morta sem aviso)
 const TAIL = 1024 * 1024;
 const SCAN_MS = 2000;
-const EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop'];
+// v0.6: + subagentes, pedido de permissão e falha de ferramenta (conferidos no Claude Code 2.1.323 em 13/11: SubagentStart/Stop
+// trazem agent_id e agent_type). Cada evento também "cutuca" o Escritório, que reage na hora em vez de esperar a varredura.
+const EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'Notification', 'Stop', 'SubagentStart', 'SubagentStop'];
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
+const LATE_AFTER_STOP = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStart', 'SubagentStop']);
 const ASKS = new Set(['AskUserQuestion', 'ExitPlanMode', 'mcp__bancada__lista', 'mcp__bancada__perguntar']);   // v0.4: cartões da Bancada
 
 function q(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
@@ -30,13 +34,36 @@ exit 0
 `;
 }
 
+// Windows (v0.7): o mesmo registro em PowerShell. Lê a entrada como UTF-8 (o console do PowerShell 5.1 não é), grava com
+// carimbo em MILISSEGUNDOS (os hooks do Windows rodam em segundo plano e podem chegar fora de ordem: o carimbo fino deixa
+// a Bancada descartar um "ferramenta terminou" que chega depois do "parou") e tenta de novo se outro hook segura o arquivo.
+function emitScriptPs(eventsDir) {
+  const dir = String(eventsDir).replace(plat.PS_SQ, '$&$&');   // aspas simples e tipográficas dobradas (literal no PowerShell)
+  return `# Bancada: registra o evento do Claude deste terminal. Gerado automaticamente; pode apagar (é recriado).
+param([string]$Ev)
+$ErrorActionPreference = 'SilentlyContinue'
+$ms = New-Object System.IO.MemoryStream
+try { [Console]::OpenStandardInput().CopyTo($ms) } catch {}
+$id = $env:BANCADA_TERM_ID
+if (-not $id -or $id -notmatch '^[A-Za-z0-9_-]{1,80}$' -or $Ev -notmatch '^[A-Za-z]{1,40}$') { exit 0 }
+$p = [Text.Encoding]::UTF8.GetString($ms.ToArray()) -replace "[\\r\\n]", ''
+if ($p.Length -gt 1500) { $p = $p.Substring(0, 1500) }
+$t = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$f = Join-Path '${dir}' "$id.log"
+$enc = New-Object System.Text.UTF8Encoding($false)
+for ($i = 0; $i -lt 8; $i++) { try { [IO.File]::AppendAllText($f, "$Ev $t $p\`n", $enc); break } catch { Start-Sleep -Milliseconds 25 } }
+exit 0
+`;
+}
+
 // Interpreta uma linha "Evento epoch {json cortado}". Tolerante: o JSON pode vir cortado; só usamos regex.
 function parseLine(line) {
-  const m = /^([A-Za-z]+) (\d{9,11}) ?(.*)$/.exec(line);
+  const m = /^([A-Za-z]+) (\d{9,13}) ?(.*)$/.exec(line);
   if (!m || !EVENTS.includes(m[1])) return null;
   const rest = m[3] || '';
   const pick = (k) => { const r = new RegExp(`"${k}":"((?:[^"\\\\]|\\\\.){0,600})"`).exec(rest); return r ? r[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\') : null; };
-  return { event: m[1], at: Number(m[2]) * 1000, session_id: pick('session_id'), transcript_path: pick('transcript_path'), notification_type: pick('notification_type'), message: pick('message'), tool: pick('tool_name') };
+  // Mac grava segundos (10 dígitos); Windows grava milissegundos (13)
+  return { event: m[1], at: m[2].length > 11 ? Number(m[2]) : Number(m[2]) * 1000, session_id: pick('session_id'), transcript_path: pick('transcript_path'), notification_type: pick('notification_type'), message: pick('message'), tool: pick('tool_name'), agent_id: pick('agent_id'), agent_type: pick('agent_type') };
 }
 
 // Tarefas em segundo plano ainda rodando nesta conversa (lê o fim da transcrição).
@@ -71,7 +98,8 @@ function nextState(cur, ev, waitingSince = 0) {
     case 'PreToolUse':
       if (ASKS.has(ev.tool)) return 'waiting';
       return cur === 'waiting' && (ev.now || ev.at) - waitingSince < 1500 ? null : 'working';
-    case 'PostToolUse': return 'working';
+    case 'PostToolUse': case 'PostToolUseFailure': return 'working';
+    case 'PermissionRequest': return 'waiting';
     case 'Notification':
       // idle_prompt = "esperando seu próximo pedido" depois de terminar: não é pedido de permissão
       if (ev.notification_type === 'idle_prompt' || ev.notification_type === 'auth_success') return null;
@@ -82,9 +110,10 @@ function nextState(cur, ev, waitingSince = 0) {
 }
 
 class ClaudeHooks {
-  constructor({ dir, onState }) {
-    this.dir = dir; this.eventsDir = path.join(dir, 'events');
+  constructor({ dir, onState, onEvent, win = plat.IS_WIN }) {
+    this.dir = dir; this.win = win; this.eventsDir = path.join(dir, 'events');
     this.onState = onState || (() => {});
+    this.onEvent = onEvent || (() => {});   // v0.6: todo evento (mesmo sem mudar de estado) — o Escritório reage na hora
     this.states = new Map();     // termId -> { state, since, workingSince, transcript, message }
     this.offsets = new Map();    // termId -> byte offset lido
     this.watcher = null; this.timer = null;
@@ -95,11 +124,24 @@ class ClaudeHooks {
   setup() {
     fs.mkdirSync(this.eventsDir, { recursive: true, mode: 0o700 });
     try { fs.chmodSync(this.dir, 0o700); fs.chmodSync(this.eventsDir, 0o700); } catch {}
-    const emit = path.join(this.dir, 'emit.sh');
-    fs.writeFileSync(emit, emitScript(this.eventsDir), { mode: 0o700 });
-    fs.chmodSync(emit, 0o700);
     const hooks = {};
-    for (const ev of EVENTS) hooks[ev] = [{ hooks: [{ type: 'command', command: `/bin/sh ${q(emit)} ${ev}`, timeout: 5 }] }];
+    if (this.win) {
+      // Windows: PowerShell chamado direto (forma "exec", sem shell — funciona com ou sem o Git Bash). Em segundo plano
+      // (async) para o Claude não esperar o PowerShell abrir a cada ferramenta; só o Stop espera, para o "terminou"
+      // chegar por último.
+      const emit = path.join(this.dir, 'emit.ps1');
+      fs.writeFileSync(emit, '\ufeff' + emitScriptPs(this.eventsDir), { mode: 0o600 });
+      for (const ev of EVENTS) {
+        const h = { type: 'command', command: plat.powershellExe(), args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', emit, ev], timeout: 10 };
+        if (ev !== 'Stop') h.async = true;
+        hooks[ev] = [{ hooks: [h] }];
+      }
+    } else {
+      const emit = path.join(this.dir, 'emit.sh');
+      fs.writeFileSync(emit, emitScript(this.eventsDir), { mode: 0o700 });
+      fs.chmodSync(emit, 0o700);
+      for (const ev of EVENTS) hooks[ev] = [{ hooks: [{ type: 'command', command: `/bin/sh ${q(emit)} ${ev}`, timeout: 5 }] }];
+    }
     // v0.4: as ferramentas de cartão só perguntam ao usuário (não leem nem gravam nada): liberadas sem pedir permissão
     const permissions = { allow: ['mcp__bancada__lista', 'mcp__bancada__perguntar', 'mcp__bancada__pendencias'] };
     fs.writeFileSync(this.settingsFile, JSON.stringify({ hooks, permissions }, null, 1), { mode: 0o600 });
@@ -153,13 +195,18 @@ class ClaudeHooks {
 
   apply(id, ev) {
     const cur = this.states.get(id) || { state: 'idle' };
+    // hook em segundo plano (Windows) que chega depois do Stop, mas aconteceu antes dele: não reabre o "trabalhando"
+    if (LATE_AFTER_STOP.has(ev.event) && cur.stopAt && ev.at < cur.stopAt) return;
+    if (ev.event === 'Stop') cur.stopAt = ev.at;
+    else if (ev.event === 'UserPromptSubmit') cur.stopAt = 0;
     if (ev.transcript_path) cur.transcript = ev.transcript_path;
     cur.lastEventAt = ev.now = Date.now();
     if (ev.event === 'Stop') ev.background = pendingBackground(cur.transcript);
     this.states.set(id, cur);
+    try { this.onEvent(id, ev); } catch {}
     const next = nextState(cur.state, ev, cur.state === 'waiting' ? cur.since : 0);
     if (!next || next === cur.state) return;
-    const message = ev.event === 'Notification' ? ev.message : ASKS.has(ev.tool) ? (ev.tool === 'ExitPlanMode' ? 'plano para aprovar' : ev.tool === 'mcp__bancada__lista' ? 'tem uma lista para você marcar' : 'tem uma pergunta para você') : null;
+    const message = ev.event === 'Notification' ? ev.message : ev.event === 'PermissionRequest' ? `quer permissão para usar ${ev.tool || 'uma ferramenta'}` : ASKS.has(ev.tool) ? (ev.tool === 'ExitPlanMode' ? 'plano para aprovar' : ev.tool === 'mcp__bancada__lista' ? 'tem uma lista para você marcar' : 'tem uma pergunta para você') : null;
     this.set(id, next, { message });
   }
 
@@ -188,4 +235,4 @@ class ClaudeHooks {
   list() { return [...this.states.entries()].map(([id, s]) => ({ id, state: s.state, since: s.since, message: s.message || null })); }
 }
 
-module.exports = { ClaudeHooks, parseLine, nextState, emitScript, pendingBackground };
+module.exports = { ClaudeHooks, parseLine, nextState, emitScript, emitScriptPs, pendingBackground };

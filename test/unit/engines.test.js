@@ -89,7 +89,7 @@ test('ponte da Bancada (v0.4): mcp-config por terminal, plugin, sem limite curto
   const calls = [];
   const bridge = { mcpConfig: (tid, pid) => { calls.push([tid, pid]); return '/x y/cfg/c9.json'; }, pluginDir: '/x y/plugin' };
   const spec = launchSpec({ store: s, terminal: s.getTerminal('c9'), project: p, bridge, initialPrompt: "/bancada:entrevista setor d'almox" });
-  assert.match(spec.exec, /^MCP_TOOL_TIMEOUT=86400000 claude /);
+  assert.match(spec.exec, /^MCP_TOOL_TIMEOUT=86400000 CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=86400000 claude /);
   assert.ok(spec.exec.includes(`--mcp-config ${q('/x y/cfg/c9.json')} --plugin-dir ${q('/x y/plugin')}`));
   assert.ok(spec.exec.endsWith(` -- ${q("/bancada:entrevista setor d'almox")}`));
   assert.deepEqual(calls, [['c9', p.id]]);

@@ -1,10 +1,13 @@
 // git só leitura por projeto (branch, mudanças pendentes, último commit). Nunca escreve no repositório.
 'use strict';
+// Segurança: um .git/config de repositório baixado pode mandar o git rodar programa (core.fsmonitor) num simples
+// status; a Bancada roda git sozinha em toda pasta de projeto. Esses -c valem mais que o config do repositório.
+const SAFE_GIT = ['-c', 'core.fsmonitor=false'];   // diff já vai com --no-ext-diff --no-textconv
 const { execFile } = require('child_process');
 
 function run(dir, args) {
   return new Promise((resolve) => {
-    execFile('git', ['-C', dir, ...args], { timeout: 4000, maxBuffer: 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } },
+    execFile('git', [...SAFE_GIT, '-C', dir, ...args], { timeout: 4000, maxBuffer: 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } },
       (err, stdout) => resolve(err ? null : String(stdout)));
   });
 }

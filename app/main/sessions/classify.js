@@ -18,7 +18,9 @@ function phrases(p) {
   return [...out];
 }
 
-function under(child, parent) { return child === parent || child.startsWith(parent.endsWith('/') ? parent : parent + '/'); }
+// v0.7: caminho do Windows (C:\\x\\y) vira c:/x/y para comparar — o Windows não diferencia maiúsculas e aceita as duas barras
+const np = (p) => (/^[A-Za-z]:[\\/]/.test(String(p)) ? String(p).replace(/\\/g, '/').toLowerCase() : String(p));
+function under(child, parent) { child = np(child); parent = np(parent); return child === parent || child.startsWith(parent.endsWith('/') ? parent : parent + '/'); }
 
 function score(s, p) {
   let sc = 0;
@@ -28,7 +30,7 @@ function score(s, p) {
   const isHub = !!(s.cwd && paths.some(pp => under(s.cwd, pp)));
   const w = isHub ? W_HUB_HIT : W_HIT;
   for (const [k, n] of Object.entries(s.hits || {})) {
-    if (paths.some(pp => under(k, pp) || under(pp, k) && k.split('/').length >= pp.split('/').length - 1)) sc += w * n;
+    if (paths.some(pp => under(k, pp) || under(pp, k) && np(k).split('/').length >= np(pp).split('/').length - 1)) sc += w * n;
   }
   if (isHub) sc += W_CWD;
   const ph = phrases(p);

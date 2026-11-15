@@ -131,3 +131,24 @@ test('Activity: avisa a tela só quando muda; terminal fechado some', () => {
   a.stop();
   fs.rmSync(dir, { recursive: true });
 });
+
+test('v0.6: poke relê o terminal em ~120 ms (sem esperar o tick de 2 s) e junta rajadas numa leitura', async () => {
+  const { Activity } = require('../../app/main/activity');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'act-poke-'));
+  const tr = path.join(dir, 's.jsonl'); fs.writeFileSync(tr, '');
+  const got = [];
+  const a = new Activity({ onChange: (x) => got.push(x), interval: 60000 });
+  a.setTerm('t1', { transcript: tr, state: 'working' });
+  const n0 = got.length;
+  fs.appendFileSync(tr, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: '/a/b.js' } }] } }) + '\n');
+  let reads = 0; const orig = a.tickOne.bind(a); a.tickOne = (id) => { reads++; return orig(id); };
+  const t0 = Date.now();
+  a.poke('t1', { event: 'PreToolUse' }); a.poke('t1', { event: 'PreToolUse' }); a.poke('t1', { event: 'PostToolUse' });
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(reads, 1, 'rajada de 3 eventos = 1 leitura');
+  const last = got[got.length - 1];
+  assert.ok(got.length > n0 && last.activity && last.activity.doing[0].verb === 'Lendo', 'a ferramenta nova aparece');
+  assert.ok(Date.now() - t0 < 400);
+  a.poke('nao-existe', {});   // terminal desconhecido: nada
+  a.stop();
+});

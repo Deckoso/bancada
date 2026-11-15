@@ -9,7 +9,7 @@
   const CODE_LABEL = { M: 'modificado', A: 'novo', D: 'apagado', R: 'renomeado', '?': 'novo (fora do git)', U: 'conflito' };
 
   const st = { pid: null, root: 0, open: {}, status: null, picked: {}, timer: null, mode: null, host: null, project: null };
-  const quote = (p) => "'" + String(p).replace(/'/g, "'\\''") + "'";
+  const quote = (p) => window.Terminals.quote(p);   // mesma regra do terminal (zsh no Mac, PowerShell no Windows)
 
   function stopTimer() { clearInterval(st.timer); st.timer = null; }
 
@@ -104,6 +104,11 @@
       let view;
       if (r.kind === 'image') view = h('div', { class: 'fp-img' }, h('img', { src: r.dataUrl, alt: rel }));
       else if (r.kind === 'binary') view = h('p', { class: 'muted', text: r.note || `Arquivo binário (${kb(r.size)}). Sem prévia.` });
+      else if (/\.(md|markdown|mdx)$/i.test(rel) && window.MdView) {   // v0.6: .md formatado
+        view = h('div', { class: 'md-body md-modal' });
+        window.MdView.renderInto(r.text, abs.slice(0, Math.max(abs.lastIndexOf('/'), abs.lastIndexOf('\\'))), view);
+        if (r.truncated) view.appendChild(h('p', { class: 'muted', text: `… (mostrando 512 KB de ${kb(r.size)})` }));
+      }
       else view = h('pre', { class: 'fp-pre', text: r.text + (r.truncated ? `\n\n… (mostrando 512 KB de ${kb(r.size)})` : '') });
       c.append(h('div', { class: 'fp-head' }, h('h2', { class: 'mono', text: rel }), h('span', { class: 'muted small', text: kb(r.size) })), actions, view);
     });

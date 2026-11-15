@@ -25,7 +25,7 @@
   t.addEventListener('input', setTo);
   t.addEventListener('keydown', async (e) => {
     if (e.key === 'Escape') { e.preventDefault(); B.capture.hide(); return; }
-    if (e.key === 'Enter' && e.metaKey) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       const text = t.value.trim();
       if (!text || sending) return;
@@ -41,3 +41,5 @@
   });
   setTo();
 })();
+// v0.7 Windows: o atalho mostrado é Ctrl+Enter
+if (window.bancada && window.bancada.platform === 'win32') for (const k of document.querySelectorAll('kbd')) if (k.textContent === '⌘↩') k.textContent = 'Ctrl+Enter';
