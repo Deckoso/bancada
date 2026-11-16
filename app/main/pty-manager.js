@@ -51,6 +51,8 @@ class PtyManager {
     const dir = cwd && safeDir(cwd) ? cwd : os.homedir();
     const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', FORCE_HYPERLINK: '1', BANCADA_PROJECT: String(projectId || ''), BANCADA_TERMINAL: String(name || ''), BANCADA_TERM_ID: String(id) };
     delete env.ELECTRON_RUN_AS_NODE;
+    // Windows: o hook.cmd usa este caminho quando o do executável tem acento (o .cmd é só ASCII)
+    if (this.win) env.BANCADA_EXE = process.execPath;
     if (this.envPath) plat.setPath(env, this.envPath(plat.getPath(env, this.win)), this.win);
     // não herdar marcas de uma sessão do Claude que tenha aberto a Bancada (desligariam o histórico da conversa nova)
     for (const k of Object.keys(env)) if (k === 'CLAUDECODE' || k.startsWith('CLAUDE_CODE_')) delete env[k];
@@ -62,6 +64,7 @@ class PtyManager {
     this.terms.set(id, t);
 
     proc.onData((d) => {
+      t.lastOutAt = Date.now();          // pulso do projeto: "ativo pelo terminal" (Codex, Windows)
       if (t.urls.length < MAX_URLS && LOOPBACK_HINT.test(d)) this.findUrls(id, t, d);
       t.pending += d;
       if (!t.paused && t.pending.length > MAX_PENDING) { t.paused = true; try { proc.pause(); } catch {} }
@@ -94,6 +97,7 @@ class PtyManager {
   }
 
   replay(id) { const t = this.terms.get(id); return t ? t.tail : null; }
+  lastOutput(id) { const t = this.terms.get(id); return t ? (t.lastOutAt || 0) : 0; }
 
   write(id, data) {
     const t = this.terms.get(id);

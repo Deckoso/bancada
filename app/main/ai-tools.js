@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const plat = require('./platform');
+const { checkup } = require('./checkup');
 
 const TOOLS = {
   claude: {
@@ -32,7 +33,7 @@ const TOOLS = {
   codex: {
     id: 'codex', name: 'Codex', vendor: 'OpenAI (ChatGPT)', bin: 'codex',
     installUrl: 'https://chatgpt.com/codex/install.sh', installUrlWin: 'https://chatgpt.com/codex/install.ps1',
-    plan: 'Precisa de um plano do ChatGPT que inclua o Codex (Plus, Pro, Business…).',
+    plan: 'Funciona com a conta do ChatGPT, inclusive no plano gratuito (com limite menor).',
     loginArgs: ['login'], updateArgs: ['update'],
     loginHint: 'O navegador vai abrir na página do ChatGPT. Entre na sua conta e autorize. Quando aparecer "Signed in", pode fechar.',
   },
@@ -58,7 +59,7 @@ function parseVersion(s) { const m = /(\d+\.\d+\.\d+[0-9A-Za-z.+-]*)/.exec(strip
 function parseClaudeStatus(out) {
   try {
     const j = JSON.parse(String(out).slice(String(out).indexOf('{')));
-    return { connected: !!j.loggedIn, account: j.email || null, plan: j.subscriptionType || null };
+    return { connected: !!j.loggedIn, account: j.email || null, plan: j.subscriptionType || null, authMethod: j.authMethod || null };
   } catch { return { connected: null }; }
 }
 function parseCodexStatus(out, code) {
@@ -187,19 +188,19 @@ class AiTools {
     const t = this.tool(id);
     const all = this.findAll(id); const bin = all[0] || null;
     const res = { id, name: t.name, vendor: t.vendor, plan: t.plan, loginHint: t.loginHint, installed: !!bin, path: bin, via: this.via(bin),
-      copies: all.map(p => ({ path: p, via: this.via(p) })), version: null, connected: null, account: null, accountPlan: null,
+      copies: all.map(p => ({ path: p, via: this.via(p) })), version: null, connected: null, account: null, accountPlan: null, authMethod: null,
       busy: !!(this.job && this.job.tool === id), job: this.job && this.job.tool === id ? this.job.kind : null };
     if (this.win) {
       res.loginHint = String(res.loginHint).replace(/⌘V/g, 'Ctrl+V');
       // sem o Git para Windows o Claude roda os comandos pelo PowerShell: funciona, mas o Bash dele fica de fora
-      if (id === 'claude' && !gitBashPath()) res.note = 'Recomendado: instale também o Git para Windows (git-scm.com). Com ele o Claude roda os comandos como no Mac e as abas Arquivos e Mudanças mostram o git.';
+      if (id === 'claude' && !gitBashPath()) res.note = 'Recomendado: instale também o Git para Windows (git-scm.com). Com ele o Claude roda os comandos pelo Bash e as abas Arquivos e Mudanças mostram o git.';
     }
-    if (!bin) return res;
+    if (!bin) { res.checkup = checkup(res); return res; }
     const v = await this.run(bin, ['--version'], { timeout: 15000 });
     res.version = parseVersion(v.out);
     if (id === 'claude') {
       const r = await this.run(bin, ['auth', 'status']);
-      const s = parseClaudeStatus(r.out); res.connected = s.connected; res.account = s.account || null; res.accountPlan = s.plan || null;
+      const s = parseClaudeStatus(r.out); res.connected = s.connected; res.account = s.account || null; res.accountPlan = s.plan || null; res.authMethod = s.authMethod || null;
     } else if (id === 'codex') {
       const r = await this.run(bin, ['login', 'status']);
       const s = parseCodexStatus(r.out, r.code); res.connected = s.connected; res.account = s.account || null;
@@ -207,6 +208,7 @@ class AiTools {
       const r = await this.run(bin, ['models']);
       res.connected = parseGoogleStatus(r.out, r.code).connected;
     }
+    res.checkup = checkup(res);
     return res;
   }
   statusAll() { return Promise.all(IDS.map(id => this.status(id))); }

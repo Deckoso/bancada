@@ -1,0 +1,15 @@
+{"scenario":"ferramentas do subagente depois do Stop não reabrem o \"trabalhando\" do principal"}
+{"t":0,"term":"t1","hook":"UserPromptSubmit","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"pesquisa isso em segundo plano"}}
+{"t":1000,"tr":{"type":"assistant","sessionId":"sess-exemplo","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_g1","name":"Agent","input":{"description":"Pesquisar alternativas","subagent_type":"general-purpose","prompt":"...","run_in_background":true}}]}}}
+{"t":1010,"term":"t1","hook":"PreToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Agent","tool_use_id":"toolu_g1"}}
+{"t":1030,"sub":"a9bg00009","meta":{"agentType":"general-purpose","description":"Pesquisar alternativas","requestShape":"background"}}
+{"t":1040,"tr":{"type":"user","sessionId":"sess-exemplo","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_g1","content":[{"type":"text","text":"Async agent launched successfully.\nagentId: a9bg00009 (internal ID - do not mention to user. Use SendMessage with to: 'a9bg00009' to continue this agent.)\nThe agent is working in the background. You will be notified automatically when it completes."}]}]}}}
+{"t":1050,"term":"t1","hook":"PostToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PostToolUse","tool_name":"Agent","tool_use_id":"toolu_g1"}}
+{"t":2000,"term":"t1","hook":"Stop","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"Stop","background_tasks":[{"id":"a9bg00009","type":"subagent","status":"running","description":"Pesquisar alternativas","agent_type":"general-purpose"}]}}
+{"t":2500,"expect":{"state":"background","pose":"follow","count":1,"agents":1}}
+{"t":30000,"sub":"a9bg00009","tr":{"type":"assistant","isSidechain":true,"agentId":"a9bg00009","message":{"content":[{"type":"tool_use","id":"toolu_x1","name":"WebSearch","input":{"query":"alternativas"}}]}}}
+{"t":30010,"term":"t1","hook":"PreToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"WebSearch","tool_use_id":"toolu_x1","agent_id":"a9bg00009","agent_type":"general-purpose"}}
+{"t":31000,"expect":{"state":"background","pose":"follow","count":1,"agentVerb":{"a9bg00009":"Pesquisando"}}}
+{"t":40000,"term":"t1","hook":"PostToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PostToolUse","tool_name":"WebSearch","tool_use_id":"toolu_x1","agent_id":"a9bg00009","agent_type":"general-purpose"}}
+{"t":41000,"expect":{"state":"background","pose":"follow","count":1}}
+{"t":780000,"expect":{"state":"background","pose":"follow","notStalled":true}}

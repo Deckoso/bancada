@@ -6,6 +6,7 @@ const { Summarizer, extractJson, heuristic } = require('../../app/main/summarize
 
 function seed() {
   const store = open(':memory:');
+  store.kvSet('ai_summary', true);   // ligado pela pessoa (instalação nova começa desligada)
   const p = store.createProject({ name: 'loja-app', status: 'focus' });
   store.db.prepare(`INSERT INTO sessions_digest (source,session_id,file,project_id,title,last_at,last_prompt,prompts,files_touched,hits,prompts_sample,last_reply)
     VALUES ('claude','s1','/f',?,'Estoque',?,'corrige a entrada de unidades',3,'[]','{}','["corrige a entrada de unidades"]','Corrigi. Falta testar no tablet.')`).run(p.id, Date.now() - 20 * 60000);

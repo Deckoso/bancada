@@ -1,0 +1,8 @@
+{"scenario":"terminal comum rodando npm run dev: aparece na bancada de ferramentas com o servidor"}
+{"t":0,"pty":"t2","kind":"shell","fg":"zsh","data":"$ "}
+{"t":1000,"expect":{"bench":[]}}
+{"t":2000,"pty":"t2","fg":"node","data":"npm run dev\r\n> vite\r\n\r\n  VITE v5  ready in 300 ms\r\n  ➜  Local:   http://localhost:5173/\r\n","url":"http://localhost:5173/"}
+{"t":3000,"expect":{"bench":[{"id":"t2","fg":"node","active":true,"url":"5173","line":"Local:"}]}}
+{"t":600000,"expect":{"bench":[{"id":"t2","fg":"node","active":true,"url":"5173"}]}}
+{"t":601000,"pty":"t2","fg":"zsh","data":"^C\r\n$ "}
+{"t":602000,"expect":{"bench":[{"id":"t2","active":false}]}}

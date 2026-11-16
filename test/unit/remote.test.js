@@ -71,6 +71,8 @@ test('acesso remoto: Host/Origin, pareamento de uso único, token, canais bloque
   const blocked = await rpc(c.ws, 'app:pickFolder');
   assert.equal(blocked.code, 'REMOTE_BLOCKED');
   assert.equal((await rpc(c.ws, 'remote:pairStart')).code, 'REMOTE_BLOCKED', 'celular não pareia outro aparelho');
+  // v0.8: voz e recorte de tela só no computador — inclusive um canal da família que não está na lista
+  for (const ch of ['voice:transcribe', 'voice:download', 'shot:screen', 'shot:send', 'voice:qualquer-novo']) assert.equal((await rpc(c.ws, ch)).code, 'REMOTE_BLOCKED', ch);
 
   // eventos chegam ao celular
   const got = new Promise((res) => c.ws.on('message', (d) => { const m = JSON.parse(d); if (m.ev === 'pty:data') res(m.payload); }));
@@ -85,6 +87,53 @@ test('acesso remoto: Host/Origin, pareamento de uso único, token, canais bloque
 
   r.stop();
   assert.equal(awake, false, 'desligou o remoto → Mac pode dormir');
+});
+
+test('desligar o remoto corta na hora: o que chega depois não é atendido e o socket é encerrado', async () => {
+  const store = open(':memory:');
+  let writes = 0;
+  const handlers = new Map([['pty:write', () => { writes++; }], ['projects:list', () => []]]);
+  const r = new Remote({ store, rendererDir: RENDERER, handlers, port: PORT + 2, ipProvider: () => '127.0.0.1' });
+  await r.start();
+  const { url } = r.pairStart();
+  const pr = await new Promise((resolve) => {
+    const q = http.request({ host: '127.0.0.1', port: PORT + 2, method: 'POST', path: '/pair', headers: { host: `127.0.0.1:${PORT + 2}`, 'content-type': 'application/json' } },
+      (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(JSON.parse(d))); });
+    q.end(JSON.stringify({ code: url.split('#pair=')[1], name: 'teste' }));
+  });
+  const ws = await new Promise((resolve) => { const w = new WebSocket(`ws://127.0.0.1:${PORT + 2}/ws`, [`bancada.${pr.token}`], { origin: `http://127.0.0.1:${PORT + 2}`, headers: { host: `127.0.0.1:${PORT + 2}` } }); w.on('open', () => resolve(w)); });
+  ws.send(JSON.stringify({ ch: 'pty:write', args: ['t1', 'a'] }));
+  await new Promise(res => setTimeout(res, 100)); assert.equal(writes, 1, 'antes de desligar: atendido');
+  const server = [...r.clients][0];
+  let terminated = false; const orig = server.ws.terminate.bind(server.ws); server.ws.terminate = () => { terminated = true; orig(); };
+  r.stop();
+  ws.send(JSON.stringify({ ch: 'pty:write', args: ['t1', 'b'] }));   // já em voo quando o remoto desliga
+  r.onMessage(server, JSON.stringify({ ch: 'pty:write', args: ['t1', 'c'] }));   // cliente que ignora o fechamento
+  await new Promise(res => setTimeout(res, 1300));
+  assert.equal(writes, 1, 'depois de desligar: nada atendido');
+  assert.equal(server.revoked, true); assert.equal(terminated, true, 'socket encerrado à força depois do fechamento');
+});
+
+test('todo canal do index.js está classificado: liberado ao celular (REMOTE_OK) ou bloqueado (BLOCKED) — nunca os dois, nunca nenhum', () => {
+  const { BLOCKED, BLOCKED_PREFIX, REMOTE_OK } = require('../../app/main/remote');
+  const src = require('fs').readFileSync(path.join(__dirname, '../../app/main/index.js'), 'utf8');
+  const chans = new Set([...src.matchAll(/\bhandle\('([^']+)'/g), ...src.matchAll(/ipcMain\.on\('([^']+)'/g)].map(m => m[1]));
+  assert.ok(chans.size > 100, `achou ${chans.size} canais`);
+  const blocked = (c) => BLOCKED.has(c) || BLOCKED_PREFIX.test(c);
+  const none = [...chans].filter(c => !blocked(c) && !REMOTE_OK.has(c));
+  const both = [...chans].filter(c => blocked(c) && REMOTE_OK.has(c));
+  assert.deepEqual(none, [], 'canal novo sem decisão: ponha em REMOTE_OK ou BLOCKED (remote.js)');
+  assert.deepEqual(both, [], 'canal nas duas listas');
+  const stale = [...REMOTE_OK].filter(c => !chans.has(c));
+  assert.deepEqual(stale, [], 'REMOTE_OK com canal que não existe mais');
+});
+
+test('canal fora da lista de liberação é recusado no celular mesmo existindo no computador', async () => {
+  const store = open(':memory:');
+  const r = new Remote({ store, rendererDir: RENDERER, handlers: new Map([['novo:canal', () => 'segredo']]), port: PORT + 3, ipProvider: () => '127.0.0.1' });
+  const sent = [];
+  await r.onMessage({ ws: { readyState: 1, send: (m) => sent.push(JSON.parse(m)) } }, JSON.stringify({ id: 1, ch: 'novo:canal', args: [] }));
+  assert.equal(sent[0].code, 'REMOTE_BLOCKED');
 });
 
 test('sem Tailscale o remoto não sobe (nunca cai para a LAN)', async () => {
@@ -120,4 +169,11 @@ test('celular não abre, não vê e não digita no terminal de login das IAs; in
   assert.ok(isLoginTerm({ ch: 'pty:replay', args: ['ai-login-codex'] }));
   assert.ok(!isLoginTerm({ ch: 'pty:write', args: ['abc', 'x'] }));
   assert.ok(!isLoginTerm({ ch: 'ai:status', args: ['ai-login-x'] }));
+});
+
+test('v0.8: voz e recorte de tela bloqueados no celular; a foto do celular continua pelo attach:image', () => {
+  const { BLOCKED, BLOCKED_PREFIX } = require('../../app/main/remote');
+  for (const ch of ['voice:status', 'voice:download', 'voice:cancel', 'voice:setModel', 'voice:transcribe', 'shot:screen', 'shot:send', 'shot:cancel']) assert.ok(BLOCKED.has(ch), ch);
+  assert.ok(BLOCKED_PREFIX.test('voice:x') && BLOCKED_PREFIX.test('shot:y') && !BLOCKED_PREFIX.test('attach:image'));
+  assert.ok(!BLOCKED.has('attach:image'));
 });

@@ -4,7 +4,7 @@
 // Memória: só os cartões abertos (máx. 20, limite do processo principal) e um rascunho por cartão, apagado ao responder.
 'use strict';
 (function () {
-  const ENTER = window.bancada && window.bancada.platform === 'win32' ? 'Ctrl+Enter' : '⌘↩';
+  const ENTER = window.UI.T.enter;
   const { h, toast } = window.UI;
   const B = window.bancada;
   let asks = [];

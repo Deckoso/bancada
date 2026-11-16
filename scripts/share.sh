@@ -8,6 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 VER=$(node -p "require('./package.json').version")
 node scripts/vendor.js >/dev/null
+[ -f app/renderer/vendor/aurora-tokens.css ] || { echo "falta app/renderer/vendor/aurora-tokens.css (defina BANCADA_AURORA_CSS)"; exit 1; }
 rm -rf dist dist-share
 npx electron-builder --mac dir --arm64 >/dev/null
 # assina uma cópia limpa FORA de Documentos (o iCloud põe atributos que o codesign recusa)

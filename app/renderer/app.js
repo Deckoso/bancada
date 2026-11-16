@@ -3,12 +3,12 @@
 // Tudo arrastável: projetos (ordem e foco↔estante), notas/prompts (ordem e entre projetos), abas, cartões do painel, Hoje.
 'use strict';
 (function () {
-  const { h, clear, $, ago, today, toast, modal, editable, errCode } = window.UI;
+  const { h, clear, $, ago, today, toast, modal, editable, errCode, T } = window.UI;
   const { draggable, sortable, dropTarget } = window.DnD;
   const B = window.bancada;
   // v0.7 Windows: Ctrl no lugar do ⌘ (com Shift onde a tecla sozinha é do terminal: Ctrl+T, Ctrl+J… o Claude usa)
-  const WIN = B.platform === 'win32';
-  const HOST = WIN ? 'PC' : 'Mac';
+  const WIN = T.win;
+  const HOST = T.host;
   if (WIN) document.body.classList.add('win');
   const K = WIN ? { n: (i) => `Ctrl+${i}`, t: 'Ctrl+Shift+T', split: 'Ctrl+Shift+\\', enter: 'Ctrl+Enter', note: 'Alt+Espaço' }
     : { n: (i) => `⌘${i}`, t: '⌘T', split: '⌘\\', enter: '⌘↩', note: '⌥Space' };
@@ -60,6 +60,10 @@
     bindChrome();
     bindLive();
     window.AskUI.init({ goTerm: (pid, tid) => goTerminal(pid, tid) });
+    // v0.8: 🎤 no cabeçalho do painel (o texto cai no terminal sem Enter)
+    if (window.CameraUI) window.CameraUI.init({ currentTerm: () => S.focusTerm, termName: (id) => { const m = meta(id); return m ? `${shortName(m.p.name)} · ${m.t.name}` : null; } });
+    if (window.UpdateUI) window.UpdateUI.init();
+    if (window.VoiceUI) window.VoiceUI.init({ currentTerm: () => S.focusTerm, termName: (id) => { const m = meta(id); return m ? `${shortName(m.p.name)} · ${m.t.name}` : null; } });
     // v0.6: .md clicado no terminal abre na prévia de arquivo (a mesma janela da aba Arquivos), formatado
     if (window.MdView) window.MdView.setTarget((doc) => {
       const L = B.links || {}; let body = null;
@@ -68,7 +72,7 @@
         const kb = doc.size > 1048576 ? `${(doc.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(doc.size / 1024))} KB`;
         const actions = h('div', { class: 'row wrap' },
           window.MdView.canBack() ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => { close(); window.MdView.back(); } }, '← Voltar') : null,
-          L.reveal ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => L.reveal(doc.path).catch(e => toast(e.message)) }, 'Mostrar no Finder') : null,
+          L.reveal ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => L.reveal(doc.path).catch(e => toast(e.message)) }, T.reveal) : null,
           h('button', { class: 'aurora-btn aurora-btn--glass sm', title: 'Cola o caminho no terminal em foco', onclick: async () => { if (await pasteToTerminal(window.Terminals.quote(doc.path) + ' ')) close(); } }, 'Colar caminho no terminal'),
           h('button', { class: 'aurora-btn aurora-btn--text sm', onclick: close }, 'Fechar'));
         body = h('div', { class: 'md-body md-modal' });
@@ -76,7 +80,7 @@
       });
       return body ? { body } : null;
     });
-    if (window.ActivityUI) window.ActivityUI.init({ goTerm: (pid, tid) => goTerminal(pid, tid), terms: officeTerms, termInfo: (id) => { const m = meta(id); return m && m.p ? { projectId: m.p.id } : null; },
+    if (window.ActivityUI) window.ActivityUI.init({ goTerm: (pid, tid) => goTerminal(pid, tid), terms: officeTerms, projects: officeProjects, termInfo: (id) => { const m = meta(id); return m && m.p ? { projectId: m.p.id } : null; },
       openOffice: () => { S.panelTab = 'office'; save('bancada.panelTab', 'office'); renderPanel(); document.body.classList.add('m-panel-open'); },
       // v0.6: quadro de pendências na parede do Escritório 3D (só o texto curto; clique leva ao painel Projeto)
       pending: async () => { const l = (await B.items.list(S.activeId)).filter(i => i.type === 'pending' && i.state === 'active'); return { items: l.slice(0, 4).map(i => String(i.text || '').slice(0, 80)), total: l.length }; },
@@ -251,7 +255,7 @@
   // mostra os terminais do projeto do painel em foco. Clicar numa aba troca o terminal do painel em foco; arrastar a
   // aba para a borda de um painel divide a tela. Cada aba/painel/projeto mostra o estado do Claude (E1).
   const L = window.Layout;
-  const STATE_LABEL = { working: 'trabalhando', waiting: 'esperando você', background: 'esperando tarefa em segundo plano', done: 'terminou', unknown: 'sem notícia há 10 min (talvez interrompido)', idle: 'parado' };
+  const STATE_LABEL = { working: 'trabalhando', waiting: 'esperando você', background: 'acompanhando o que roda em segundo plano', done: 'terminou', unknown: 'sem notícia há 10 min (talvez interrompido)', idle: 'parado' };
   const STATE_RANK = { waiting: 5, working: 4, background: 3, done: 2, unknown: 1 };
 
   function defaultTerminal(p) {
@@ -361,7 +365,7 @@
       dotFor(id),
       h('span', { class: 'pane-title', text: m ? `${shortName(m.p.name)} · ${m.t.name}` : id }),
       stateOf(id) ? h('span', { class: `pane-state st-${stateOf(id)}`, text: STATE_LABEL[stateOf(id)] }) : null,
-      h('span', { class: 'pane-extras' }, urlChips(id), ctxChip(id),
+      h('span', { class: 'pane-extras' }, urlChips(id), ctxChip(id), window.CameraUI ? window.CameraUI.button(id) : null, window.VoiceUI ? window.VoiceUI.button(id) : null,
         n > 1 ? h('button', { class: 'pane-x', title: 'Fechar painel (o terminal continua rodando na aba)', onmousedown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); closePane(id); } }, '×') : null));
   }
 
@@ -669,6 +673,9 @@
 
   // ---- estado do Claude (E1), contexto (E5) e servidores locais (E5) chegando do processo principal ----
   function bindLive() {
+    if (B.ui.onReport) B.ui.onReport(() => reportModal());
+    if (B.limits) { B.limits.onChanged(renderLimits); B.limits.get().then(renderLimits).catch(() => {}); }
+    if (B.feedback) { B.feedback.onCard((c) => feedbackCard(c)); B.feedback.current().then(feedbackCard).catch(() => {}); }
     B.claude.onState((e) => {
       if (e.state === 'off') delete S.cst[e.id]; else S.cst[e.id] = e;
       if (e.ctx) S.ctx[e.id] = e.ctx;
@@ -686,6 +693,7 @@
   }
   // terminais que aparecem no Escritório: os de IA (ou com estado de Claude) deste projeto ou dos projetos em foco
   const officeLoading = new Set();
+  function officeProjects(scope) { return scope === 'all' ? [...new Set([...focusProjects().map(p => p.id), ...Object.keys(S.layout)])] : [S.activeId]; }
   function officeTerms(scope) {
     const pids = scope === 'all' ? [...focusProjects().map(p => p.id), ...Object.keys(S.layout)] : [S.activeId];
     const out = []; const seen = new Set();
@@ -855,7 +863,7 @@
       };
       what.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) ok(); });
       card.append(h('h2', { text: 'Novo projeto guiado' }),
-        h('p', { class: 'muted small', text: 'O Claude te faz uma pergunta por vez, com opções para tocar, até entender de verdade o que você quer. No fim mostra o resumo para você confirmar e, se tiver a athena, já manda para a forja do blueprint.' }),
+        h('p', { class: 'muted small', text: 'O Claude te faz uma pergunta por vez, com opções para tocar, até entender de verdade o que você quer. No fim mostra o resumo para você confirmar e, se o seu motor tiver um comando de planejamento, já manda para ele.' }),
         field('O que vamos criar?', what), field('Em qual projeto?', sel),
         h('div', { class: 'row end' }, h('button', { class: 'aurora-btn aurora-btn--text', onclick: close }, 'Cancelar'), h('button', { class: 'aurora-btn aurora-btn--primary', onclick: ok }, 'Começar')));
     });
@@ -1167,13 +1175,13 @@
     const paint = async () => {
       const st = await B.remote.status(); const devs = await B.remote.devices();
       clear(box);
-      box.appendChild(h('p', { class: 'muted small', text: 'Use a Bancada pelo celular ou iPad como se estivesse aqui, terminais incluídos. Só funciona pelo Tailscale (seus aparelhos); nada fica aberto no Wi-Fi. Enquanto estiver ligado, o Mac não entra em repouso.' }));
+      box.appendChild(h('p', { class: 'muted small', text: `Use a Bancada pelo celular ou iPad como se estivesse aqui, terminais incluídos. Só funciona pelo Tailscale (seus aparelhos); nada fica aberto no Wi-Fi. Enquanto estiver ligado, o ${HOST} não entra em repouso.` }));
       const toggle = h('input', { type: 'checkbox', checked: st.enabled, onchange: async () => {
         const r = toggle.checked ? await B.remote.enable() : await B.remote.disable();
         if (r && r.error) toast(r.error, 6000);
         paint();
       } });
-      box.appendChild(h('label', { class: 'field check' }, toggle, h('span', { text: st.running ? `Ligado em ${st.url} · ${st.clients} aparelho(s) conectado(s)` : st.enabled ? `Ligado, esperando o Tailscale${st.tailscale ? '' : ' (desligado neste Mac)'}` : 'Desligado' })));
+      box.appendChild(h('label', { class: 'field check' }, toggle, h('span', { text: st.running ? `Ligado em ${st.url} · ${st.clients} aparelho(s) conectado(s)` : st.enabled ? `Ligado, esperando o Tailscale${st.tailscale ? '' : ` (desligado neste ${HOST})`}` : 'Desligado' })));
       if (st.running) {
         const qrBox = h('div', { class: 'qr' });
         box.append(h('div', { class: 'row wrap' }, h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: async () => {
@@ -1201,6 +1209,21 @@
   // Tudo pelo instalador e pelo login OFICIAIS de cada empresa; a Bancada nunca vê senha.
   async function refreshAiInstalled() { try { S.aiInstalled = await B.ai.installed(); } catch {} return S.aiInstalled; }
 
+  // uma linha da Checagem: ✅ ok · ❌ falta algo (com a frase do conserto) · • não dá para saber daqui
+  function checkLine(sp, extra = '') {
+    const mark = sp.ok === true ? '✅' : sp.ok === false ? '❌' : '•';
+    return h('div', { class: `small check-step ${sp.ok === true ? 'ok-text' : sp.ok === false ? 'amber-text' : 'muted'}` },
+      h('span', { text: `${mark} ${sp.text}${extra}` }), sp.hint ? h('span', { class: 'check-hint', text: ` ${sp.hint}` }) : null);
+  }
+  // resumo da Checagem de todas as IAs: quais estão prontas e, se nenhuma, o que fazer
+  function checkSummary(list) {
+    const ready = list.filter(x => x.checkup && x.checkup.ready).map(x => x.name);
+    const claudeNoPlan = list.find(x => x.id === 'claude' && x.checkup && x.checkup.suggest === 'codex');
+    return h('div', { class: 'check-summary' },
+      h('p', { class: `small ${ready.length ? 'ok-text' : 'amber-text'}`, text: ready.length ? `✅ Pronto para usar: ${ready.join(', ')}.` : '❌ Nenhuma IA pronta ainda: instale e entre na sua conta em pelo menos uma.' }),
+      claudeNoPlan && !ready.includes('Codex') ? h('p', { class: 'small', text: claudeNoPlan.checkup.steps[claudeNoPlan.checkup.steps.length - 1].hint }) : null);
+  }
+
   function aiSection({ after } = {}) {
     const box = h('div', { class: 'ai-cards' });
     const shellBox = h('div', { class: 'ai-shell' });
@@ -1211,11 +1234,8 @@
       const icon = AI_ICON[st.id] || '•';
       const log = h('pre', { class: 'ai-log hidden' });
       const lines = [];
-      lines.push(h('div', { class: `small ${st.installed ? 'ok-text' : 'muted'}`, text: st.installed ? `● instalado${st.version ? ` ${st.version}` : ''}${st.via && st.via !== 'instalador oficial' ? ` (${st.via})` : ''}` : '○ não instalado' }));
-      if (st.installed) {
-        lines.push(h('div', { class: `small ${st.connected ? 'ok-text' : st.connected === false ? 'amber-text' : 'muted'}`,
-          text: st.connected ? `● conectado${st.account ? ` · ${st.account}` : ''}${st.accountPlan ? ` (${st.accountPlan})` : ''}` : st.connected === false ? '○ não conectado à sua conta' : '? não deu para saber se está conectado (sem internet?)' }));
-      }
+      // Checagem: instalada → conectada → plano, cada degrau com ✅/❌ e, se falhou, o que fazer (o botão está logo abaixo)
+      for (const sp of (st.checkup && st.checkup.steps) || []) lines.push(checkLine(sp, sp.key === 'installed' && st.via && st.via !== 'instalador oficial' ? ` (${st.via})` : ''));
       if ((st.copies || []).length > 1) lines.push(h('div', { class: 'small amber-text', text: `${st.copies.length} cópias instaladas (${st.copies.map(c => c.via).join(', ')}). A Bancada usa ${st.copies[0].via === 'instalador oficial' ? 'a oficial' : 'a primeira'}: ${st.copies[0].path.replace(/^\/Users\/[^/]+/, '~')}.` }));
       const run = async (kind) => {
         if (busy) { toast('Espere a outra instalação terminar'); return; }
@@ -1245,23 +1265,23 @@
       if (window.__REMOTE) return;
       clear(shellBox);
       let sc; try { sc = await B.ai.shellCheck(); } catch { return; }
-      if (sc.na) return;   // Windows: não há .zshrc para consertar
-      if (sc.ok) { shellBox.appendChild(h('p', { class: 'small ok-text', text: '✓ O Terminal do Mac (fora da Bancada) também acha as IAs.' })); return; }
+      if (sc.na || WIN) return;   // Windows: não há .zshrc para consertar
+      if (sc.ok) { shellBox.appendChild(h('p', { class: 'small ok-text', text: `✓ O ${T.terminal} (fora da Bancada) também acha as IAs.` })); return; }
       shellBox.append(
-        h('p', { class: 'small muted', text: `Os terminais da Bancada acham as IAs sempre. O Terminal do Mac, fora da Bancada, ${sc.duplicates ? `tem a configuração repetida ${sc.duplicates + 1} vezes no ~/.zshrc` : sc.has_line ? 'não está achando as IAs' : 'não sabe onde as IAs ficam (falta uma linha no ~/.zshrc)'}.` }),
+        h('p', { class: 'small muted', text: `Os terminais da Bancada acham as IAs sempre. O ${T.terminal}, fora da Bancada, ${sc.duplicates ? `tem a configuração repetida ${sc.duplicates + 1} vezes no ~/.zshrc` : sc.has_line ? 'não está achando as IAs' : 'não sabe onde as IAs ficam (falta uma linha no ~/.zshrc)'}.` }),
         h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: async () => {
-          if (!confirm('Ajustar o ~/.zshrc para o Terminal do Mac achar claude, codex e agy?\n\nFaço uma cópia de segurança antes, removo linhas repetidas e acrescento só uma, se faltar. O resto do arquivo não muda.')) return;
+          if (!confirm(`Ajustar o ~/.zshrc para o ${T.terminal} achar claude, codex e agy?\n\nFaço uma cópia de segurança antes, removo linhas repetidas e acrescento só uma, se faltar. O resto do arquivo não muda.`)) return;
           try { const r = await B.ai.fixShell(); toast(r.changed ? `Pronto. ${r.removed ? `${r.removed} linha(s) repetida(s) removida(s). ` : ''}${r.added ? 'Linha acrescentada. ' : ''}${r.backup ? `Cópia em ${r.backup.replace(/^\/Users\/[^/]+/, '~')}` : ''}` : 'Já estava certo.', 8000); }
           catch (e) { toast(e.message); }
           paintShell();
-        } }, 'Consertar o Terminal do Mac'));
+        } }, `Consertar o ${T.terminal}`));
     };
 
     const paint = async (full) => {
       clear(box).appendChild(h('p', { class: 'muted small', text: full ? 'Conferindo de novo…' : 'Conferindo o que está instalado e conectado…' }));
       let list = [];
       try { list = await B.ai.status(); } catch (e) { clear(box).appendChild(h('p', { class: 'danger small', text: e.message })); return; }
-      clear(box); for (const st of list) box.appendChild(card(st));
+      clear(box).appendChild(checkSummary(list)); for (const st of list) box.appendChild(card(st));
       if (full) paintShell();
     };
     paint(); paintShell();
@@ -1285,7 +1305,14 @@
     catch (e) { toast(e.message); }
   }
 
-  // Primeira abertura: quem já programa (motor + pastas) ou quem está começando (IAs + primeiro projeto)
+  // Pergunta da primeira abertura: resumo por IA do "onde parei" (padrão desligado; muda depois nos Ajustes)
+  function aiSummaryAsk(cb, prefix = '') {
+    return h('div', {},
+      h('label', { class: 'field check' }, cb, h('span', { text: `${prefix}Resumo por IA do "onde parei" em cada projeto` })),
+      h('p', { class: 'muted small', text: 'Para resumir, a Bancada manda trechos das suas conversas com a IA para a Anthropic (o Claude), pela sua própria conta. Vem desligado; dá para mudar nos Ajustes.' }));
+  }
+
+  // Primeira abertura: quem já programa (pastas + motor opcional) ou quem está começando (IAs + primeiro projeto)
   function welcome() {
     modal((c, close) => {
       c.classList.add('wide');
@@ -1295,7 +1322,7 @@
           h('button', { class: 'park-opt', onclick: () => { close(); starterAi(); } },
             h('strong', { text: 'Estou começando' }), h('span', { class: 'muted small', text: 'Instalo e conecto a IA para você e crio uma pasta "Meu primeiro projeto". Não precisa saber terminal.' })),
           h('button', { class: 'park-opt', onclick: () => { close(); onboarding(); } },
-            h('strong', { text: 'Já tenho meus projetos' }), h('span', { class: 'muted small', text: 'Escolho as pastas de projeto e, se tiver, a pasta-motor (ex.: athena-os).' }))));
+            h('strong', { text: 'Já tenho meus projetos' }), h('span', { class: 'muted small', text: 'Escolho as pastas de projeto e, se quiser, uma pasta-motor (opcional).' }))));
     });
   }
 
@@ -1328,6 +1355,7 @@
     }
     delete S.layout[p.id];
     go('project', p.id);
+    const sumOn = h('input', { type: 'checkbox' });
     modal((c, close) => {
       c.append(h('h2', { text: '2 de 2 · Pronto!' }),
         h('p', { class: 'small', text: `A pasta "Meu primeiro projeto" está em Documentos › Bancada, e o ${ready.name} já está aberto nela.` }),
@@ -1336,7 +1364,14 @@
           : 'Na primeira vez ele pergunta, em inglês, se você confia na pasta. A opção "Trust and continue" já vem marcada: é só apertar Enter.' }),
         h('p', { class: 'small', text: 'Depois, escreva no terminal o que você quer, em português, e aperte Enter. Por exemplo: "crie uma página com um relógio grande e me mostre como abrir".' }),
         h('p', { class: 'muted small', text: 'A bolinha na aba mostra o estado: roxa trabalhando, âmbar esperando você, verde terminou.' }),
-        h('div', { class: 'row end' }, h('button', { class: 'aurora-btn aurora-btn--primary', onclick: close }, 'Começar')));
+        h('h3', { class: 'sec', text: 'Checagem' }), checkSummary(list),
+        ...list.filter(x => x.installed).map(x => h('div', { class: 'check-ai' }, h('strong', { class: 'small', text: x.name }), ...((x.checkup && x.checkup.steps) || []).map(sp => checkLine(sp)))),
+        h('p', { class: 'muted small', text: 'Para conferir de novo ou consertar: Ajustes → Assistentes de IA.' }),
+        aiSummaryAsk(sumOn),
+        h('div', { class: 'row end' }, h('button', { class: 'aurora-btn aurora-btn--primary', onclick: async () => {
+          try { await B.settings.set({ ai_summary: sumOn.checked }); S.settings = await B.settings.get(); } catch (e) { toast(e.message); }
+          close();
+        } }, 'Começar')));
     });
   }
 
@@ -1349,13 +1384,19 @@
       const limit = h('select', { class: 'aurora-input' }, [1, 2, 3, 4, 5].map(n => h('option', { value: n, text: String(n), selected: st.focus_limit === n })));
       const aiOn = h('input', { type: 'checkbox', checked: st.ai_summary });
       const skipDef = h('input', { type: 'checkbox', checked: !!st.claude_skip_default });
-      const theme = h('select', { class: 'aurora-input' }, [['system', WIN ? 'Igual ao Windows' : 'Igual ao Mac'], ['light', 'Claro'], ['dark', 'Escuro']].map(([v2, l]) => h('option', { value: v2, text: l, selected: st.theme === v2 })));
+      const theme = h('select', { class: 'aurora-input' }, [['system', WIN ? 'Igual ao Windows' : `Igual ao ${HOST}`], ['light', 'Claro'], ['dark', 'Escuro']].map(([v2, l]) => h('option', { value: v2, text: l, selected: st.theme === v2 })));
       c.append(h('h2', { text: 'Ajustes' }),
         h('h3', { class: 'sec', text: 'Assistentes de IA' }),
-        h('p', { class: 'muted small', text: WIN ? 'Instale e conecte as IAs com um clique. Os terminais da Bancada acham cada uma sozinhos.' : 'Instale e conecte as IAs com um clique. Os terminais da Bancada acham cada uma sozinhos, mesmo que o Terminal do Mac dê "command not found".' }),
+        h('p', { class: 'muted small', text: WIN ? 'Instale e conecte as IAs com um clique. Os terminais da Bancada acham cada uma sozinhos.' : `Instale e conecte as IAs com um clique. Os terminais da Bancada acham cada uma sozinhos, mesmo que o ${T.terminal} dê "command not found".` }),
         aiSection({ after: settingsModal }),
+        window.VoiceUI ? h('h3', { class: 'sec', text: 'Voz no terminal' }) : null,
+        window.VoiceUI ? window.VoiceUI.settingsSection(checkLine) : null,
+        window.CameraUI ? h('h3', { class: 'sec', text: 'Recorte de tela' }) : null,
+        window.CameraUI ? window.CameraUI.settingsSection(checkLine) : null,
+        window.UpdateUI && !window.__REMOTE ? h('h3', { class: 'sec', text: 'Atualização' }) : null,
+        window.UpdateUI && !window.__REMOTE ? window.UpdateUI.settingsSection() : null,
         h('h3', { class: 'sec', text: 'Motores' }),
-        h('p', { class: 'muted small', text: 'O motor é a pasta-cérebro (ex.: athena-os): o Claude de cada projeto abre dentro dela, com as skills e comandos dela, focado no projeto. A Bancada confere a pasta toda vez que abre e quando ela muda.' }),
+        h('p', { class: 'muted small', text: 'Opcional. O motor é uma pasta com instruções para a IA (CLAUDE.md, skills, comandos): o Claude de cada projeto abre dentro dela, focado no projeto. A Bancada confere a pasta toda vez que abre e quando ela muda.' }),
         enginesSection(async () => { await loadEngines(); if (S.view === 'project') { renderHead(); renderPanel(); } }),
         window.__REMOTE ? null : h('h3', { class: 'sec', text: 'Acesso remoto (celular / iPad)' }),
         window.__REMOTE ? null : remoteSection(),
@@ -1364,13 +1405,100 @@
         h('label', { class: 'field check' }, skipDef, h('span', { text: 'Terminal "claude" novo abre sem permissões (--dangerously-skip-permissions) por padrão. Os dois botões na barra de abas continuam valendo.' })),
         h('label', { class: 'field check' }, aiOn, h('span', { text: `Resumo por IA do "onde parei" (Haiku pela sua assinatura). Hoje: ${ai.calls_today}/${ai.cap}${ai.claude ? '' : ' (claude não encontrado)'}${ai.last_error ? ` · último erro: ${ai.last_error}` : ''}` })),
         st.promptpad_available ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: async () => { const r = await B.app.importPromptPad(); toast(`PromptPad: ${r.items} itens importados, ${r.skipped} já estavam aqui`); } }, 'Importar notas do PromptPad') : null,
+        B.diag ? h('h3', { class: 'sec', text: 'Problemas' }) : null,
+        B.diag ? h('div', { class: 'row wrap' }, h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => reportModal() }, 'Relatar problema'),
+          h('span', { class: 'muted small', text: 'Copia um relatório curto (versões, Checagem e registro de erros) para você colar numa mensagem. Sem terminal, conversa ou senha.' })) : null,
         h('div', { class: 'row end' }, h('button', { class: 'aurora-btn aurora-btn--text', onclick: close }, 'Cancelar'),
           h('button', { class: 'aurora-btn aurora-btn--primary', onclick: async () => {
             try { await B.settings.set({ hotkey: hotkey.value.trim(), morning_time: morning.value, focus_limit: Number(limit.value), ai_summary: aiOn.checked, theme: theme.value, claude_skip_default: skipDef.checked }); }
             catch (e) { toast(e.message); return; }
             S.settings = await B.settings.get(); applyTheme(S.settings.theme); close(); renderSide();
           } }, 'Salvar')));
-    });
+    }, { onClose: () => { if (window.VoiceUI && window.VoiceUI.closeSettings) window.VoiceUI.closeSettings(); } });   // solta o ouvinte de progresso da voz
+  }
+
+  // ---------------- relatar problema (v0.8) ----------------
+  // monta o diagnóstico no processo principal (redigido), copia para a área de transferência e mostra a prévia
+  let reporting = false;
+  async function reportModal() {
+    if (!B.diag || reporting) return;
+    reporting = true;
+    let pre = null, status = null;
+    modal((c, close) => {
+      c.classList.add('wide');
+      status = h('p', { class: 'muted small', text: 'Montando o relatório (confere as IAs, leva alguns segundos)…' });
+      pre = h('pre', { class: 'fp-pre diag-pre' });
+      c.append(h('h2', { text: 'Relatar problema' }), status, pre,
+        h('p', { class: 'muted small', text: 'Vai só o que está acima: versões, Checagem das IAs, respostas dos cartões e o registro de erros da Bancada. Nada de terminal, conversa, conta ou senha.' }),
+        h('div', { class: 'row end' },
+          h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => fill() }, 'Copiar de novo'),
+          h('button', { class: 'aurora-btn aurora-btn--primary', onclick: close }, 'Fechar')));
+    }, { onClose: () => { reporting = false; } });
+    async function fill() {
+      try {
+        const r = await B.diag.report();
+        if (pre) pre.textContent = r.text;
+        if (status) status.textContent = 'Copiado para a área de transferência. Cole numa mensagem para quem te passou a Bancada.';
+      } catch (e) { if (status) status.textContent = 'Não deu para montar o relatório: ' + e.message; }
+    }
+    fill();
+  }
+
+  // ---------------- medidor de limite (v0.8) ----------------
+  // "Limite 5 h: 62% · semana: 41%" por conta, pela barra de status do Claude. Âmbar a partir de 80%, nunca vermelho.
+  // Sem dado (ainda sem resposta do Claude, plano sem limite, janela que já virou) → some.
+  const hhmm = (s) => { const d = new Date(s * 1000); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  function backAt(s) {
+    if (!s) return '';
+    const d = new Date(s * 1000); const now = new Date();
+    if (d.toDateString() === now.toDateString()) return `volta às ${hhmm(s)}`;
+    return `volta ${d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')} às ${hhmm(s)}`;
+  }
+  function limitsLine(a, many, i) {
+    const parts = []; const tips = []; let warn = false;
+    for (const [k, label, tipLabel] of [['five_hour', '5 h', 'Janela de 5 h'], ['seven_day', 'semana', 'Semana']]) {
+      const w = a[k]; if (!w) continue;
+      const hot = w.pct >= 80; warn = warn || hot;
+      parts.push(`${label}: ${w.pct}%${hot && w.resets_at ? ` (${backAt(w.resets_at)})` : ''}`);
+      if (w.resets_at) tips.push(`${tipLabel}: ${w.pct}% · ${backAt(w.resets_at)}`);
+    }
+    if (!parts.length) return null;
+    return h('div', { class: `limits-row${warn ? ' warn' : ''}`, title: tips.join('\n') || null }, `${many ? `Conta ${i + 1} · ` : ''}Limite ${parts.join(' · ')}`);
+  }
+  function renderLimits(st) {
+    const list = (st && Array.isArray(st.accounts)) ? st.accounts : [];
+    for (const sel of ['#limits', '#m-limits']) {
+      const el = $(sel); if (!el) continue;
+      clear(el);
+      const rows = list.map((a, i) => limitsLine(a, list.length > 1, i)).filter(Boolean);
+      for (const r of (sel === '#m-limits' ? rows.slice(0, 1) : rows)) el.appendChild(r);
+      el.classList.toggle('hidden', !rows.length);
+    }
+  }
+
+  // ---------------- cartões de retorno (v0.8) ----------------
+  // um cartão pequeno no canto: não bloqueia nada; a resposta fica só neste computador
+  const FB = {
+    week: { title: 'Como foi a semana com a Bancada?', options: [['boa', 'Boa'], ['mais ou menos', 'Mais ou menos'], ['ruim', 'Ruim']] },
+    crash: { title: 'Travou alguma coisa?', sub: 'A Bancada registrou um erro há pouco.', options: [['travou', 'Sim, travou'], ['não percebi nada', 'Não percebi nada']] },
+    // quem veio da 0.7 com o resumo ligado (padrão antigo): pergunta uma vez; até responder, continua como estava
+    summary: { title: 'O resumo por IA continua ligado. Manter?', sub: 'Para resumir o "onde parei", a Bancada manda trechos das suas conversas (Claude e Codex) para a Anthropic, pela sua própria conta. Dá para mudar depois nos Ajustes.',
+      options: [['manter', 'Manter ligado'], ['desligar', 'Desligar']], noNote: true, thanks: (a) => (a === 'manter' ? 'Resumo por IA mantido.' : 'Resumo por IA desligado.') },
+  };
+  function feedbackCard(card) {
+    const old = document.getElementById('fb-card'); if (old) old.remove();
+    if (!card || !FB[card.kind]) return;
+    const cfg = FB[card.kind];
+    const note = h('textarea', { class: 'aurora-input', rows: 2, maxlength: 1000, placeholder: 'Quer contar algo? (opcional)' });
+    const send = async (answer) => { try { await B.feedback.answer(card.kind, answer, cfg.noNote ? '' : note.value); el.remove(); toast(cfg.thanks ? cfg.thanks(answer) : 'Obrigado! Fica guardado só neste ' + HOST + '.'); if (cfg.thanks) S.settings = await B.settings.get(); } catch (e) { toast(e.message); } };
+    const el = h('div', { id: 'fb-card', class: 'fb-card', role: 'dialog' },
+      h('strong', { text: cfg.title }), cfg.sub ? h('p', { class: 'muted small', text: cfg.sub }) : null,
+      h('div', { class: 'row wrap' }, cfg.options.map(([v2, l]) => h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => send(v2) }, l))),
+      cfg.noNote ? null : note,
+      h('div', { class: 'row between' },
+        card.kind === 'crash' && B.diag ? h('button', { class: 'aurora-btn aurora-btn--text sm', onclick: () => reportModal() }, 'Relatar problema') : h('span'),
+        h('button', { class: 'aurora-btn aurora-btn--text sm', onclick: async () => { el.remove(); try { await B.feedback.dismiss(card.kind); } catch {} } }, 'Agora não')));
+    document.body.appendChild(el);
   }
 
   // ---------------- primeira abertura (D15 + motor) ----------------
@@ -1400,36 +1528,40 @@
         list.appendChild(row);
       }
       refresh();
-      // motor: sugere as pastas com .claude/ (ex.: uma pasta com CLAUDE.md); a primeira vem marcada
-      const pre = sugg.findIndex(s => /athena/i.test(s.name));
+      // motor (opcional): padrão "Nenhum"; as pastas com .claude/ ou CLAUDE.md aparecem como sugestão, sem pré-marcar
       const engSel = h('select', { class: 'aurora-input' },
-        sugg.map((s, i) => h('option', { value: s.path, text: `${s.name} — ${s.path.replace(/^\/Users\/[^/]+/, '~')}`, selected: i === (pre >= 0 ? pre : 0) })),
-        h('option', { value: '', text: 'Nenhum (terminais na pasta de cada projeto)' }), h('option', { value: '__pick', text: 'Outra pasta…' }));
+        h('option', { value: '', text: 'Nenhum (cada terminal abre na pasta do projeto)', selected: true }),
+        sugg.map(s => h('option', { value: s.path, text: `${s.name} — ${s.path.replace(/^\/Users\/[^/]+/, '~')}` })),
+        h('option', { value: '__pick', text: 'Outra pasta…' }));
       engSel.addEventListener('change', async () => {
         if (engSel.value !== '__pick') return;
         const d = await B.app.pickFolder();
         if (d) { engSel.insertBefore(h('option', { value: d, text: d.replace(/^\/Users\/[^/]+/, '~') }), engSel.firstChild); engSel.value = d; } else engSel.value = '';
       });
-      const st_pp = h('input', { type: 'checkbox', checked: true });
+      // PromptPad: só aparece (e só vem marcado) se as notas dele existem neste computador
+      const ppOn = !!(S.settings && S.settings.promptpad_available);
+      const st_pp = h('input', { type: 'checkbox', checked: ppOn });
+      const sumOn = h('input', { type: 'checkbox' });
       const ok = async () => {
         if (engSel.value && engSel.value !== '__pick') { try { await B.engines.add({ path: engSel.value }); } catch (e) { toast(e.message); } }
         for (const d of found) {
           if (!picked.has(d.path)) continue;
           try { await B.projects.create({ name: d.name, kind: d.kind, paths: [d.path], status: picked.get(d.path) }); } catch (e) { toast(`${d.name}: ${e.message}`); }
         }
-        if (st_pp.checked) { try { const r = await B.app.importPromptPad(); toast(`PromptPad: ${r.items} itens importados`); } catch (e) { toast(e.message); } }
-        await B.settings.set({ onboarded: true });
+        if (ppOn && st_pp.checked) { try { const r = await B.app.importPromptPad(); toast(`PromptPad: ${r.items} itens importados`); } catch (e) { toast(e.message); } }
+        await B.settings.set({ onboarded: true, ai_summary: sumOn.checked });
         S.settings = await B.settings.get();
         close(); await Promise.all([loadProjects(), loadEngines()]);
         const f = focusProjects()[0]; go(f ? 'project' : 'today', f && f.id);
       };
       c.classList.add('wide');
       c.append(h('h2', { text: 'Bem-vindo à Bancada' }),
-        field('1. Motor: a pasta-cérebro onde o Claude de cada projeto vai rodar', engSel),
-        h('p', { class: 'muted small', text: 'É o jeito que você já trabalha: abre a athena e manda no projeto. Dá para trocar ou ter vários motores nos Ajustes.' }),
-        h('div', { class: 'field' }, h('span', { text: '2. Projetos: marque os que entram e dê ★ em até 3 que estão em foco agora' })),
-        list,
-        h('label', { class: 'field check' }, st_pp, h('span', { text: 'Trazer as notas do PromptPad' })),
+        h('div', { class: 'field' }, h('span', { text: '1. Projetos: marque os que entram e dê ★ em até 3 que estão em foco agora' })),
+        found.some(x => !x.registered) ? list : h('p', { class: 'muted small', text: 'Não achei pastas de projeto com git. Sem problema: depois é só usar "+ Projeto" na barra da esquerda.' }),
+        field('2. Pasta-motor (opcional): uma pasta com instruções para a IA (CLAUDE.md, skills) onde o Claude de cada projeto abre', engSel),
+        h('p', { class: 'muted small', text: 'Se não sabe o que é, deixe "Nenhum". Dá para mudar depois nos Ajustes.' }),
+        aiSummaryAsk(sumOn, '3. '),
+        ppOn ? h('label', { class: 'field check' }, st_pp, h('span', { text: 'Trazer as notas do PromptPad' })) : null,
         h('p', { class: 'muted small', text: 'As IAs (Claude, Codex, Google) se instalam e conectam em Ajustes → Assistentes de IA.' }),
         h('div', { class: 'row between' }, counter, h('button', { class: 'aurora-btn aurora-btn--primary', onclick: ok }, 'Começar')));
     });

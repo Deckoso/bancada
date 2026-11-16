@@ -1,7 +1,7 @@
 {
   "name": "bancada",
   "productName": "Bancada",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Bancada — terminais por projeto, onde parei e captura rápida (evolução do PromptPad)",
   "author": "Deckoso",
   "repository": {
@@ -17,16 +17,28 @@
     "start": "electron .",
     "postinstall": "electron-rebuild -f -w node-pty,better-sqlite3 && node scripts/vendor.js",
     "test": "ELECTRON_RUN_AS_NODE=1 electron --test test/unit/*.test.js",
+    "test:update-win": "electron test/e2e/updater-win-e2e.js",
+    "test:update-mac": "ELECTRON_RUN_AS_NODE=1 electron test/e2e/updater-mac-e2e.js",
     "test:corpus": "ELECTRON_RUN_AS_NODE=1 electron test/corpus/sessions-corpus.js",
-    "predist": "node scripts/vendor.js",
+    "predist": "node scripts/vendor.js && node scripts/build-whisper-mac.js",
     "dist": "electron-builder --mac dir --arm64",
     "install-app": "zsh scripts/install.sh",
     "update-app": "zsh scripts/update.sh",
     "share": "zsh scripts/share.sh",
-    "dist:win": "node scripts/build-win.js"
+    "dist:win": "node scripts/build-win.js",
+    "dist:mac": "node scripts/build-mac.js",
+    "whisper:mac": "node scripts/build-whisper-mac.js",
+    "release:pack": "node scripts/release.js"
   },
   "build": {
     "appId": "com.mcpp.bancada",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Deckoso",
+        "repo": "bancada"
+      }
+    ],
     "productName": "Bancada",
     "files": [
       "app/**",
@@ -49,11 +61,24 @@
       ],
       "identity": null,
       "extendInfo": {
-        "LSUIElement": false
+        "LSUIElement": false,
+        "NSMicrophoneUsageDescription": "A Bancada usa o microfone só enquanto você segura o botão 🎤, para transformar sua fala em texto no terminal. O áudio é processado neste Mac e apagado; nada vai para a internet.",
+        "NSScreenCaptureUsageDescription": "A Bancada usa a gravação de tela só quando você clica em 📷 para recortar uma parte da tela e mandar a imagem para o terminal. A imagem fica neste Mac."
       },
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "x64ArchFiles": "Contents/Resources/{app.asar.unpacked/node_modules/{better-sqlite3,node-pty}/prebuilds/darwin-*{.node,/*},whisper/whisper-cli}",
+      "extraResources": [
+        {
+          "from": "build/whisper/mac",
+          "to": "whisper",
+          "filter": [
+            "whisper-cli"
+          ]
+        }
+      ]
     },
     "npmRebuild": false,
+    "afterPack": "scripts/after-pack.js",
     "directories": {
       "buildResources": "build"
     },
@@ -82,6 +107,16 @@
         "!node_modules/better-sqlite3/prebuilds/darwin-*",
         "!node_modules/better-sqlite3/prebuilds/linux*",
         "!node_modules/better-sqlite3/prebuilds/win32-arm64.node"
+      ],
+      "extraResources": [
+        {
+          "from": "build/whisper/win",
+          "to": "whisper",
+          "filter": [
+            "*.exe",
+            "*.dll"
+          ]
+        }
       ]
     },
     "nsis": {
@@ -108,6 +143,7 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "^13.0.3",
+    "electron-updater": "^6.8.11",
     "node-pty": "^1.1.0",
     "qrcode": "^1.5.4",
     "three": "0.187.0",

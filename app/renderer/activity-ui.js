@@ -6,7 +6,9 @@
 (function () {
   const { h } = window.UI;
   const B = window.bancada;
+  const OM = window.OfficeModel;
   const act = {};                  // termId -> snapshot
+  const pulse = {};                // projectId -> pulso do projeto (terminais comuns, servidor, git, testes, Codex)
   const rate = new Map();          // task id -> { t0, p0 } (para estimar pelo andamento)
   let opts = { termInfo: () => null, terms: () => [], goTerm: () => {}, onChange: () => {} };
   let clock = null;
@@ -20,6 +22,10 @@
       paintStrips(); opts.onChange(id); Office.sync();
     });
     B.activity.list().then((l) => { Object.assign(act, l || {}); paintStrips(); Office.sync(); }).catch(() => {});
+    if (B.pulse) {
+      B.pulse.onChanged(({ projectId, pulse: p }) => { if (p) pulse[projectId] = p; else delete pulse[projectId]; Office.sync(); });
+      B.pulse.list().then((l) => { Object.assign(pulse, l || {}); Office.sync(); }).catch(() => {});
+    }
   }
 
   // ---------------- tempo ----------------
@@ -56,10 +62,10 @@
     // chamar um agente já aparece na linha dos agentes (não repete como ferramenta)
     const doing = a.agents.some(x => !x.done) ? a.doing.filter(d => d.name !== 'Agent' && d.name !== 'Task') : a.doing;
     for (const d of doing) out.push({ ic: '⚙', label: d.verb, what: d.what, since: d.since, eta: eta(d, now), kind: 'doing' });
+    // tarefa calada segue rodando (a lista oficial / a falta de aviso de fim dizem isso): "rodando em silêncio", não "travou"
     for (const t of a.tasks) {
-      const quiet = t.lastSignalAt ? now - t.lastSignalAt : null;
-      out.push({ ic: t.kind === 'monitor' ? '👁' : '⏳', label: t.kind === 'monitor' ? 'Vigiando' : 'Em segundo plano', what: t.what, since: t.since, line: t.line,
-        eta: eta(t, now), quiet: quiet != null && quiet > 120000 ? quiet : null, kind: 'task' });
+      out.push({ ic: t.kind === 'monitor' ? '👁' : t.kind === 'workflow' ? '🔀' : '⏳', label: t.kind === 'monitor' ? 'Vigiando' : t.kind === 'workflow' ? 'Fluxo de agentes' : 'Em segundo plano', what: t.what, since: t.since, line: t.line,
+        eta: eta(t, now), quiet: t.silent ? (t.quietMs || 0) : null, kind: 'task' });
     }
     const live = a.agents.filter(x => !x.done);
     if (live.length) out.push({ ic: '🤖', label: live.length === 1 ? '1 agente' : `${live.length} agentes`, agents: live, since: Math.min(...live.map(x => x.since)), kind: 'agents' });
@@ -69,7 +75,7 @@
   function strip(termId) {
     const a = act[termId]; if (!a) return null;
     const now = Date.now(); const list = rows(a, now);
-    if (!list.length && !a.stalled) return null;
+    if (!list.length && !a.stalled && !a.limit) return null;
     const el = h('div', { class: `act-strip ${a.stalled ? 'stalled' : ''}`, title: 'Clique para abrir o Escritório', onmousedown: (e) => e.stopPropagation(), onclick: () => opts.openOffice && opts.openOffice() });
     for (const r of list.slice(0, 3)) {
       const parts = [h('span', { class: 'act-ic', text: r.ic }), h('b', { text: r.label })];
@@ -78,11 +84,12 @@
       parts.push(h('span', { class: 'act-time', dataset: { since: String(r.since) }, text: dur(now - r.since) }));
       if (r.line) parts.push(h('span', { class: 'act-line', title: 'Última linha da saída', text: `“${r.line}”` }));
       if (r.eta) parts.push(h('span', { class: `act-eta ${r.eta.late ? 'late' : ''}`, title: r.eta.how, text: r.eta.text }));
-      if (r.quiet) parts.push(h('span', { class: 'act-quiet', text: `sem saída há ${approx(r.quiet)}` }));
+      if (r.quiet) parts.push(h('span', { class: 'act-quiet silent', text: `rodando em silêncio · ${approx(r.quiet)}` }));
       el.appendChild(h('div', { class: 'act-row' }, parts));
     }
     if (list.length > 3) el.appendChild(h('div', { class: 'act-row muted', text: `+${list.length - 3}` }));
-    if (a.stalled) el.appendChild(h('div', { class: 'act-row act-stall', text: `⚠ Nenhum sinal há ${approx(now - a.lastSignalAt)}: pode ter travado (Esc no terminal interrompe).` }));
+    if (a.limit) el.appendChild(h('div', { class: 'act-row act-stall', text: `⏸ Limite de uso atingido${a.limit.text ? ': ' + a.limit.text : ''}` }));
+    else if (a.stalled) el.appendChild(h('div', { class: 'act-row act-stall', text: `⚠ Nenhum sinal há ${approx(now - a.lastSignalAt)}: pode ter travado (Esc no terminal interrompe).` }));
     return el;
   }
 
@@ -207,25 +214,12 @@
     function unmount() { if (big) return; teardown(); }
 
     // v0.6: o que o 3D precisa saber de cada um (o 3D decide a animação e o lugar)
+    // o que o 3D precisa saber de cada um (o 3D decide a animação e o lugar). A regra da pose fica no office-model.js
     function model3d() {
       const terms = opts.terms(scope);
-      const actorsList = []; const tasks = [];
-      for (const t of terms) { const a = act[t.id]; if (a) for (const k of a.tasks) tasks.push({ ...k, termId: t.id }); }
-      terms.forEach((t, i) => {
-        const a = act[t.id]; const color = COLORS[i % COLORS.length]; const st = t.state;
-        const busy = st === 'working' || (a && a.doing.length);
-        const mode = a && a.stalled ? 'stalled' : st === 'waiting' ? 'waiting' : busy ? 'desk' : st === 'background' || (a && a.tasks.length) ? 'machine' : 'sofa';
-        const d0 = a && (a.doing.find(d => d.name !== 'Agent' && d.name !== 'Task') || a.doing[0]);
-        const bubble = mode === 'waiting' ? 'esperando você' : mode === 'stalled' ? 'sem sinal há algum tempo' : d0 ? `${d0.verb}${d0.what ? ': ' + d0.what : ''}` : mode === 'machine' && a.tasks[0] ? `aguardando: ${a.tasks[0].what || 'tarefa'}` : 'parado';
-        actorsList.push({ id: t.id, termId: t.id, kind: 'claude', name: `${t.projectName} · ${t.name}`, color, mode, verb: d0 ? d0.verb : (mode === 'machine' ? 'Aguardando tarefa' : null), what: d0 ? d0.what : '', bubble,
-          taskIdx: Math.max(0, tasks.findIndex(k => k.termId === t.id)) });
-        if (a) for (const ag of a.agents) {
-          actorsList.push({ id: `ag:${ag.id}`, termId: t.id, kind: 'agent', name: `${ag.type} (de ${t.name})`, color: AGENT_COLORS[ag.type] || '#8fa3b8',
-            mode: ag.done ? 'leave' : now() - ag.lastSignalAt > 120000 ? 'stalled' : 'desk', verb: ag.last ? ag.last.verb : 'Agente', what: ag.last ? ag.last.what : ag.what,
-            bubble: ag.done ? 'terminei' : ag.what });
-        }
-      });
-      return { actors: actorsList.filter(x => x.mode !== 'leave'), tasks, pending: pend };
+      const m = OM.build({ terms, act, pulse, now: now(), projects: opts.projects ? opts.projects(scope) : null });
+      const actorsList = m.actors.map(x => ({ ...x, color: x.kind === 'agent' ? (AGENT_COLORS[x.type] || '#8fa3b8') : COLORS[x.idx % COLORS.length], bubble: x.label }));
+      return { actors: actorsList.filter(x => x.mode !== 'leave'), tasks: m.tasks, bench: m.bench, boards: m.boards, pending: pend, now: now() };
     }
     function loadPending() {
       if (!opts.pending || Date.now() - pendAt < 5000) return;
@@ -242,14 +236,12 @@
       terms.forEach((t, i) => {
         const a = act[t.id];
         const color = COLORS[i % COLORS.length];
-        const st = t.state;
-        const busy = st === 'working' || (a && a.doing.length);
-        const mode = a && a.stalled ? 'stalled' : st === 'waiting' ? 'waiting' : busy ? 'desk' : st === 'background' || (a && a.tasks.length) ? 'machine' : 'sofa';
-        const d0 = a && (a.doing.find(d => d.name !== 'Agent' && d.name !== 'Task') || a.doing[0]);
-        const bubble = mode === 'waiting' ? '! esperando você' : mode === 'stalled' ? 'zzz… sem sinal' : d0 ? `${d0.verb}${d0.what ? ': ' + d0.what : ''}` : mode === 'machine' && a.tasks[0] ? `aguardando: ${a.tasks[0].what || 'tarefa'}` : null;
-        want.set(t.id, { id: t.id, termId: t.id, kind: 'claude', name: `${t.projectName} · ${t.name}`, color, mode, bubble, since: d0 ? d0.since : null });
+        const p = OM.poseOf({ state: t.state, act: a, pt: null, now: now() });
+        const mode = { work: 'desk', think: 'desk', wait: 'waiting', limit: 'waiting', follow: 'machine', stalled: 'stalled' }[p.pose] || 'sofa';
+        const bubble = p.pose === 'wait' ? '! esperando você' : p.label || null;
+        want.set(t.id, { id: t.id, termId: t.id, kind: 'claude', name: `${t.projectName} · ${t.name}`, color, mode, bubble, since: p.since || null });
         if (a) for (const ag of a.agents) {
-          want.set(`ag:${ag.id}`, { id: `ag:${ag.id}`, termId: t.id, kind: 'agent', name: ag.type, color: AGENT_COLORS[ag.type] || '#8fa3b8', mode: ag.done ? 'leave' : now() - ag.lastSignalAt > 120000 ? 'stalled' : 'desk',
+          want.set(`ag:${ag.id}`, { id: `ag:${ag.id}`, termId: t.id, kind: 'agent', name: ag.type, color: AGENT_COLORS[ag.type] || '#8fa3b8', mode: ag.done ? 'leave' : 'desk',
             bubble: ag.done ? 'terminei' : ag.last ? `${ag.last.verb}${ag.last.what ? ': ' + ag.last.what : ''}` : ag.what, since: ag.since, what: ag.what, boss: color });
         }
       });
@@ -469,6 +461,10 @@
       return best;
     }
 
+    function legendState(t, a) {
+      if (OM) { const p = OM.poseOf({ state: t.state, act: a, pt: t.pt || null, now: Date.now() }); if (p.pose === 'follow' || p.pose === 'limit' || p.pose === 'stalled') return p.label; }
+      return a && a.stalled ? 'sem sinal' : ({ working: 'trabalhando', waiting: 'esperando você', background: 'acompanhando', done: 'terminou', unknown: 'sem notícia' }[t.state] || 'parado');
+    }
     // legenda em texto (acessível, e dá o detalhe que não cabe no balão)
     function legend() {
       const el = host && host.querySelector('.office-legend'); if (!el) return;
@@ -480,7 +476,7 @@
         const a = act[t.id];
         const row = h('div', { class: 'ol-row', onclick: () => opts.goTerm(t.projectId, t.id) },
           h('b', { text: `${t.projectName} · ${t.name}` }),
-          h('span', { class: `ol-st st-${t.state || 'idle'}`, text: a && a.stalled ? 'sem sinal' : ({ working: 'trabalhando', waiting: 'esperando você', background: 'segundo plano', done: 'terminou', unknown: 'sem notícia' }[t.state] || 'parado') }));
+          h('span', { class: `ol-st st-${t.state || 'idle'}`, text: legendState(t, a) }));
         el.appendChild(row);
         if (!a) continue;
         for (const r of rows(a, nowT)) {

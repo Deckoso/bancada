@@ -13,6 +13,8 @@ LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchService
 
 echo "Montando a versão nova (a Bancada pode continuar aberta)…"
 node scripts/vendor.js >/dev/null
+[ -f app/renderer/vendor/aurora-tokens.css ] || { echo "falta app/renderer/vendor/aurora-tokens.css (defina BANCADA_AURORA_CSS)"; exit 1; }
+node scripts/build-whisper-mac.js   # motor de voz: compila da fonte oficial na 1ª vez (~45 s), depois reaproveita
 rm -rf dist dist-next
 npx electron-builder --mac dir --arm64 >/dev/null
 for old in dist/mac-arm64/Bancada.app; do [ -d "$old" ] && $LSREG -u "$PWD/$old" 2>/dev/null || true; done

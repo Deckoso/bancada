@@ -16,7 +16,7 @@ test('versão e status de conta', () => {
   assert.equal(parseVersion('2.1.318 (Claude Code)'), '2.1.318');
   assert.equal(parseVersion('codex-cli 0.156.1'), '0.156.1');
   assert.equal(parseVersion('nada'), null);
-  assert.deepEqual(parseClaudeStatus('{"loggedIn":true,"email":"a@b.c","subscriptionType":"max"}'), { connected: true, account: 'a@b.c', plan: 'max' });
+  assert.deepEqual(parseClaudeStatus('{"loggedIn":true,"email":"a@b.c","subscriptionType":"max","authMethod":"claude.ai"}'), { connected: true, account: 'a@b.c', plan: 'max', authMethod: 'claude.ai' });
   assert.equal(parseClaudeStatus('{"loggedIn":false}').connected, false);
   assert.equal(parseClaudeStatus('lixo').connected, null);
   assert.deepEqual(parseCodexStatus('Logged in using ChatGPT\n', 0), { connected: true, account: 'ChatGPT' });
@@ -53,6 +53,7 @@ test('status de uma IA instalada (binário falso) e não instalada', async () =>
   assert.equal(s.installed, true); assert.equal(s.version, '9.9.9'); assert.equal(s.connected, true);
   const n = await ai.status('google');
   assert.equal(n.installed, false); assert.equal(n.connected, null);
+  assert.equal(s.checkup.ready, true); assert.equal(n.checkup.fix, 'install');
 });
 
 test('consertar .zshrc: remove duplicata, não mexe no resto, idempotente', () => {

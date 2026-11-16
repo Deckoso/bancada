@@ -4,6 +4,9 @@
 (function () {
   const TOKEN_KEY = 'bancada.remoteToken';
   window.__REMOTE = true;
+  // sistema do computador ao qual o celular está ligado (o servidor põe no data-host): "PC" ou "Mac" nos avisos
+  const HOST_OS = (document.currentScript && document.currentScript.dataset.host) || 'darwin';
+  const HOST = HOST_OS === 'win32' ? 'PC' : 'Mac';
   let ws = null, seq = 0, backoff = 1000, timer = null, ready = null;
   const pending = new Map();
   const subs = {};
@@ -25,13 +28,13 @@
     const name = /iPad/.test(navigator.userAgent) ? 'iPad' : /iPhone/.test(navigator.userAgent) ? 'iPhone' : 'aparelho';
     const r = await fetch('/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: m[1], name }) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { banner(j.error || 'Pareamento recusado. Gere um QR novo no Mac.', 'err'); return; }
+    if (!r.ok) { banner(j.error || `Pareamento recusado. Gere um QR novo no ${HOST}.`, 'err'); return; }
     setToken(j.token);
   }
 
   function connect() {
     const token = getToken();
-    if (!token) { banner('Este aparelho ainda não está pareado. No Mac: Ajustes → Acesso remoto → Parear aparelho, e leia o QR.', 'err'); return; }
+    if (!token) { banner(`Este aparelho ainda não está pareado. No ${HOST}: Ajustes → Acesso remoto → Parear aparelho, e leia o QR.`, 'err'); return; }
     ready = new Promise((resolve) => {
       ws = new WebSocket(`ws://${location.host}/ws`, [`bancada.${token}`]);
       ws.onopen = () => { backoff = 1000; banner(''); resolve(); while (queue.length) ws.send(queue.shift()); };
@@ -43,10 +46,10 @@
         if (m.ok) p.resolve(m.data); else p.reject(new Error(`[${m.code || 'ERR'}] ${m.error || 'falha'}`));
       };
       ws.onclose = (e) => {
-        for (const p of pending.values()) { clearTimeout(p.t); p.reject(new Error('[OFFLINE] conexão com o Mac caiu')); }
+        for (const p of pending.values()) { clearTimeout(p.t); p.reject(new Error(`[OFFLINE] conexão com o ${HOST} caiu`)); }
         pending.clear();
-        if (e.code === 4001) { setToken(null); banner('Este aparelho foi desconectado no Mac. Pareie de novo.', 'err'); return; }
-        banner('Sem conexão com o Mac (ele está acordado e com o Tailscale ligado?). Tentando de novo…', 'warn');
+        if (e.code === 4001) { setToken(null); banner(`Este aparelho foi desconectado no ${HOST}. Pareie de novo.`, 'err'); return; }
+        banner(`Sem conexão com o ${HOST} (ele está acordado e com o Tailscale ligado?). Tentando de novo…`, 'warn');
         clearTimeout(timer);
         timer = setTimeout(connect, backoff);                  // um timer só, com espera crescente até 30 s
         backoff = Math.min(30000, backoff * 2);
@@ -61,14 +64,14 @@
   }
   const call = (ch) => (...args) => new Promise((resolve, reject) => {
     const id = send(ch, args);
-    const t = setTimeout(() => { pending.delete(id); reject(new Error('[TIMEOUT] o Mac não respondeu')); }, 20000);
+    const t = setTimeout(() => { pending.delete(id); reject(new Error(`[TIMEOUT] o ${HOST} não respondeu`)); }, 20000);
     pending.set(id, { resolve, reject, t });
   });
   const fire = (ch) => (...args) => { send(ch, args); };
   const on = (ch) => (fn) => { (subs[ch] = subs[ch] || new Set()).add(fn); return () => subs[ch].delete(fn); };
 
   window.bancada = {
-    platform: (document.currentScript && document.currentScript.dataset.host) || 'darwin',   // sistema do computador
+    platform: HOST_OS,   // sistema do computador
     projects: { list: call('projects:list'), create: call('projects:create'), update: call('projects:update'), swapFocus: call('projects:swapFocus'),
       discover: call('projects:discover'), git: call('projects:git'), setActive: call('projects:setActive'), reorder: call('projects:reorder') },
     items: { list: call('items:list'), create: call('items:create'), update: call('items:update'), remove: call('items:delete'), today: call('items:today'), reorder: call('items:reorder') },
@@ -86,12 +89,16 @@
     remote: null,
     asks: { list: call('asks:list'), answer: call('asks:answer'), dismiss: call('asks:dismiss'), onChanged: on('asks:changed') },
   activity: { list: call('activity:list'), onChanged: on('activity:changed') },
+  pulse: { list: call('pulse:list'), onChanged: on('pulse:changed') },
     // a consulta aos servidores acontece só no Mac: o celular só lê o resultado
     links: { resolve: call('links:resolve'), readMd: call('links:readMd'), openDir: null, reveal: null, openUrl: async (u) => { window.open(u, '_blank', 'noopener'); return true; } },
     servers: { list: call('servers:list'), refresh: async () => true, edit: null, onChanged: on('servers:changed') },
   claude: { states: call('claude:states'), seen: call('claude:seen'), context: call('claude:context'), onState: on('claude:state') },
     // o layout dos painéis é do Mac: o celular mostra 1 painel e não grava nada
-    ui: { focusTerm: async () => true, onGoTerminal: on('ui:goTerminal'), layoutGet: async () => null, layoutSet: async () => true },
+    ui: { focusTerm: async () => true, onGoTerminal: on('ui:goTerminal'), layoutGet: async () => null, layoutSet: async () => true, onReport: () => () => {} },
+    diag: null,   // relatar problema é só no computador
+    limits: { get: call('limits:get'), onChanged: on('limits:changed') },
+    feedback: { current: call('feedback:current'), answer: call('feedback:answer'), dismiss: call('feedback:dismiss'), onCard: on('feedback:card') },
     files: { roots: call('files:roots'), list: call('files:list'), read: call('files:read'), reveal: null, openInCursor: null, pathFor: () => null },
     git: { status: call('git:status'), diff: call('git:diff'), commit: call('git:commit') },
     attach: { clipboard: null, image: call('attach:image') },

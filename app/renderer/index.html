@@ -14,6 +14,8 @@
     <div class="side-top drag">
       <img class="brand-logo" src="assets/bancada-logo-128.png" alt=""><span class="brand">Bancada</span>
     </div>
+    <div id="limits" class="limits hidden" aria-live="polite"></div>
+    <div id="update-note" class="update-note hidden" role="status"></div>
     <nav id="nav">
       <button class="nav-item" data-view="today" id="nav-today"><span class="ic">☀︎</span><span>Hoje</span><span class="count" id="today-count"></span></button>
       <div class="nav-label">Em foco <span class="hint" id="focus-hint"></span></div>
@@ -32,6 +34,7 @@
   <main id="center">
     <div class="m-bar m-only-flex">
       <button class="mini m-only" id="m-side-btn" title="Projetos">☰ Projetos</button>
+      <span id="m-limits" class="limits m-limits hidden"></span>
       <button class="mini m-only" id="m-panel-btn" title="Painel">Painel ▸</button>
     </div>
     <header id="proj-head" class="drag"></header>
@@ -66,8 +69,12 @@
 <script src="terminals.js"></script>
 <script src="files-panel.js"></script>
 <script src="asks-ui.js"></script>
+<script src="office-model.js"></script>
 <script src="activity-ui.js"></script>
 <script src="md-view.js"></script>
+<script src="voice-ui.js"></script>
+<script src="camera-ui.js"></script>
+<script src="update-ui.js"></script>
 <script src="app.js"></script>
 <script type="module" src="office3d.js"></script>
 </body>

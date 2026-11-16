@@ -35,3 +35,14 @@ test('vendor: OrbitControls aponta para o three local (sem import "three" solto)
   if (!fs.existsSync(oc)) return;   // vendor é gerado (npm start/dist)
   assert.doesNotMatch(fs.readFileSync(oc, 'utf8'), /from 'three'/);
 });
+
+test('v0.8: poses novas animadas, estações dinâmicas, bancada, quadro do projeto; update nunca recria a sala', () => {
+  assert.match(src, /a\.anim === 'watch' \|\| a\.anim === 'limit'/, '"acompanhando" e "limite" animam (nada parado sem motivo)');
+  assert.match(src, /const STATIONS = \[(\{[^}]+\}, ){5}\{[^}]+\}\];/, '6 estações');
+  assert.match(src, /st\.g\.visible = i < BASE_STATIONS \|\| i < tasks\.length/);
+  assert.match(src, /drawBench\(/); assert.match(src, /drawProjectBoard\(/);
+  const upd = src.slice(src.indexOf('function update(model)'), src.indexOf('function recenter()'));
+  assert.doesNotMatch(upd, /buildRoom\(|mount\(|new THREE\./, 'update só atualiza (lição v0.6.1)');
+  // telas com "há X min": a chave muda no máximo 1×/min, não a cada quadro
+  assert.match(src, /mins\(now - task\.since\)/);
+});

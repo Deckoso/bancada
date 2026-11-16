@@ -95,7 +95,7 @@ class Summarizer {
 
   status() {
     const today = localDate();
-    return { enabled: this.store.kvGet('ai_summary', true), calls_today: this.store.kvGet(`ai_calls:${today}`, 0), cap: DAILY_CAP,
+    return { enabled: this.store.kvGet('ai_summary', false), calls_today: this.store.kvGet(`ai_calls:${today}`, 0), cap: DAILY_CAP,
       queued: this.queue.length, busy: this.busy, last_error: this.lastError, claude: !!findClaude() };
   }
 
@@ -130,7 +130,7 @@ class Summarizer {
         this.onChange(pid);
       }
     }
-    if (s && this.store.kvGet('ai_summary', true)) {
+    if (s && this.store.kvGet('ai_summary', false)) {
       const idle = Date.now() - (s.last_at || 0) > IDLE_MS;
       const stale = !s.summary_at || s.summary_at < s.last_at;
       if ((force || idle) && stale) this.enqueue({ pid, session: s, git: g });
@@ -152,7 +152,7 @@ class Summarizer {
   }
 
   checkIdle() {
-    if (!this.store.kvGet('ai_summary', true)) return;
+    if (!this.store.kvGet('ai_summary', false)) return;
     for (const p of this.store.listProjects().filter(x => x.status === 'focus')) this.refreshProject(p.id).catch(() => {});
   }
 

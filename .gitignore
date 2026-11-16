@@ -9,3 +9,7 @@ app/renderer/vendor/
 dist-next/
 dist-share/
 dist-win/
+dist-mac/
+build/whisper/win/
+build/whisper/mac/
+release/

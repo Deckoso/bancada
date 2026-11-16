@@ -53,3 +53,6 @@ button, .tab, .nav-proj, .mini { touch-action: manipulation; }
 .ask-btns { padding-left: 0; }
 .ask-note { margin-left: 0; width: 100%; }
 .ask-choice { padding: 12px; }
+
+/* v0.8: 📷 e 🎤 no cabeçalho do painel com alvo de toque maior */
+.pane-cam, .pane-mic { font-size: 15px; padding: 1px 8px; }

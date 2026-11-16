@@ -171,6 +171,12 @@ class Store {
     const r = this.db.prepare('SELECT v FROM kv WHERE k=?').get(k);
     return r ? JSON.parse(r.v) : def;
   }
+  // Resumo por IA (manda trechos das conversas à Anthropic pela conta da pessoa): instalação nova começa DESLIGADA até a
+  // pessoa responder na boas-vindas; quem já tinha banco (já usava a Bancada, quando o padrão era ligado) mantém o que tinha.
+  initAiSummary(existed) {
+    if (this.kvGet('ai_summary', null) === null) this.kvSet('ai_summary', !!existed);
+    return this.kvGet('ai_summary', false);
+  }
   kvSet(k, v) { this.db.prepare('INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(k, JSON.stringify(v)); }
 
   ensureInbox() {

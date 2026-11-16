@@ -1,0 +1,12 @@
+{"scenario":"turno normal: pede, lê, pensa, termina"}
+{"t":0,"term":"t1","hook":"UserPromptSubmit","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"arruma o teste"}}
+{"t":500,"expect":{"state":"working","pose":"think","count":0}}
+{"t":1000,"tr":{"type":"assistant","sessionId":"sess-exemplo","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_r1","name":"Read","input":{"file_path":"/tmp/projeto-exemplo/src/app.js"}}]}}}
+{"t":1100,"term":"t1","hook":"PreToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Read","tool_use_id":"toolu_r1"}}
+{"t":1500,"expect":{"pose":"work","label":"Lendo","count":0}}
+{"t":2000,"tr":{"type":"user","sessionId":"sess-exemplo","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_r1","content":"1\tconst a = 1;"}]}}}
+{"t":2100,"term":"t1","hook":"PostToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PostToolUse","tool_name":"Read","tool_use_id":"toolu_r1"}}
+{"t":3000,"expect":{"pose":"think"}}
+{"t":9000,"tr":{"type":"assistant","sessionId":"sess-exemplo","message":{"role":"assistant","content":[{"type":"text","text":"Feito."}]}}}
+{"t":9100,"term":"t1","hook":"Stop","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"Feito.","background_tasks":[]}}
+{"t":9500,"expect":{"state":"done","pose":"sofa","count":0,"agents":0,"tasks":[]}}

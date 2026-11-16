@@ -1,0 +1,9 @@
+{"scenario":"limite de uso atingido: mostra \"limite\", não \"Pensando\" nem \"sem sinal\""}
+{"t":0,"term":"t1","hook":"UserPromptSubmit","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"continua o refactor"}}
+{"t":2000,"tr":{"type":"assistant","isApiErrorMessage":true,"error":"rate_limit","message":{"role":"assistant","content":[{"type":"text","text":"You've hit your limit · resets 3pm"}]}}}
+{"t":180000,"expect":{"pose":"limit","label":"limite","notStalled":true}}
+{"t":181000,"term":"t1","hook":"Stop","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"Stop","background_tasks":[]}}
+{"t":182000,"expect":{"state":"done","pose":"limit"}}
+{"t":300000,"term":"t1","hook":"UserPromptSubmit","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"e agora?"}}
+{"t":302000,"tr":{"type":"assistant","sessionId":"sess-exemplo","message":{"role":"assistant","content":[{"type":"text","text":"Voltei."}]}}}
+{"t":303000,"expect":{"state":"working","pose":"think"}}

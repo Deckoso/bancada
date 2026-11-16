@@ -1,0 +1,9 @@
+{"scenario":"compactação da conversa: trabalhando \"Compactando\", não \"Pensando\" parado"}
+{"t":0,"term":"t1","hook":"UserPromptSubmit","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"continua"}}
+{"t":1000,"term":"t1","hook":"PreCompact","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PreCompact","trigger":"auto","custom_instructions":""}}
+{"t":40000,"expect":{"state":"working","pose":"work","label":"Compactando"}}
+{"t":150000,"expect":{"state":"working","pose":"work","label":"Compactando","notStalled":true}}
+{"t":160000,"tr":{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","compactMetadata":{"trigger":"auto"}}}
+{"t":161000,"tr":{"type":"assistant","sessionId":"sess-exemplo","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_c1","name":"Edit","input":{"file_path":"/tmp/projeto-exemplo/src/app.js"}}]}}}
+{"t":161100,"term":"t1","hook":"PreToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"toolu_c1"}}
+{"t":162000,"expect":{"pose":"work","label":"Editando"}}

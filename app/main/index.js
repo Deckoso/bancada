@@ -1,6 +1,6 @@
 // Processo principal da Bancada. Fonte: BLUEPRINT D2 (segurança), D3 (terminais), D12 (bandeja/login), D13 (captura).
 'use strict';
-const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, nativeImage, dialog, shell, session, screen, Notification, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, nativeImage, dialog, shell, session, screen, Notification, powerSaveBlocker, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -15,6 +15,7 @@ const { EngineWatch, launchSpec } = require('./engines');
 const { Remote } = require('./remote');
 const { ClaudeHooks } = require('./hooks');
 const { Activity } = require('./activity');
+const { ProjectPulse } = require('./project-pulse');
 const { Servers } = require('./servers');
 const { AskBroker } = require('./asks');
 const { AiTools, IDS: AI_IDS, firstProjectDir } = require('./ai-tools');
@@ -30,14 +31,27 @@ const QRCode = require('qrcode');
 const git = require('./git');
 const v = require('./validate');
 const plat = require('./platform');
+const { Log, attachMain, attachRenderer, errText } = require('./log');
+const { buildReport } = require('./diagnostic');
+const { Feedback } = require('./feedback');
+const statusMeter = require('./status');
+const { Voice, binPath: whisperBin, buildPrompt } = require('./voice');
+const { voiceCheckup, shotCheckup } = require('./checkup');
+const { ScreenShot } = require('./screen-shot');
+const { Updater, bundleOf } = require('./updater');
 
 const RENDERER = path.join(__dirname, '..', 'renderer');
 const USER_DIR = process.env.BANCADA_DATA_DIR || path.join(app.getPath('appData'), 'Bancada');
 const PROMPTPAD_FILE = path.join(os.homedir(), 'Library', 'Application Support', 'PromptPad', 'notes.json');
 // Pasta de trabalho: ~/Documents e as pastas logo abaixo dela (sem caminho fixo de ninguém). Teto de 60 para não varrer demais.
 const PROJECT_DIR_NAMES = ['PROJETOS', 'Projetos', 'Projects', 'projects'];
-// Documentos do usuário (no Windows pode estar no OneDrive: o Electron sabe onde)
-function docsDir() { try { return app.getPath('documents'); } catch { return path.join(os.homedir(), 'Documents'); } }
+// Documentos do usuário. No Windows pode estar no OneDrive: o Electron sabe onde. No Mac é sempre ~/Documents (pelo HOME,
+// que é o que os testes de "casa limpa" trocam; o app.getPath do Mac ignora o HOME e olharia a pasta real).
+function userDir(name, sub) {
+  if (plat.IS_WIN) { try { return app.getPath(name); } catch {} }
+  return path.join(os.homedir(), sub);
+}
+function docsDir() { return userDir('documents', 'Documents'); }
 function workRoots() {
   const docs = docsDir();
   let ents = []; try { ents = fs.readdirSync(docs, { withFileTypes: true }); } catch {}
@@ -49,15 +63,38 @@ function projectsDir() {
   for (const r of workRoots()) for (const n of PROJECT_DIR_NAMES) { const d = path.join(r, n); try { if (fs.statSync(d).isDirectory()) return d; } catch {} }
   return null;
 }
+// lugares da varredura rasa do cadastro inicial (só pastas com .git): as de código primeiro, Documentos por último
+function scanRoots() {
+  const home = os.homedir();
+  const desk = userDir('desktop', 'Desktop');
+  return [
+    { dir: path.join(home, 'Developer'), label: 'Developer' }, { dir: path.join(home, 'Projects'), label: 'Projects' },
+    { dir: path.join(home, 'source', 'repos'), label: 'repos' }, { dir: path.join(home, 'repos'), label: 'repos' },
+    { dir: desk, label: 'Área de Trabalho' }, { dir: docsDir(), label: 'Documentos' },
+  ];
+}
 const HOTKEY_DEFAULT = 'Alt+Space';
 
 // pasta de dados própria (testes) → perfil próprio do Electron, para não colidir com a Bancada aberta
 if (process.env.BANCADA_DATA_DIR) app.setPath('userData', path.join(process.env.BANCADA_DATA_DIR, 'electron'));
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
+// v0.8: registro de problemas (logs/bancada.log, 2 × 1 MB) — erros do principal, da tela e dos processos filhos.
+// Nunca saída de terminal nem prompt. Cada erro também pode puxar o cartão "Travou?" (feedback.js).
+let onLogError = null;
+const log = new Log({ dir: path.join(USER_DIR, 'logs'), onError: (line) => { if (onLogError) onLogError(line); } });
+attachMain(log, { app, crashReporter: require('electron').crashReporter });
+
 let ai, store, ptys, reader, summarizer, morning, engines, remote, hooks, asks, mainWin, captureWin, tray;
 let activity = null;
+let pulse = null;
 let servers = null;   // v0.6: sala de servidores do Escritório
+let feedback = null;  // v0.8: cartões de retorno
+let limits = null;    // v0.8: medidor de limite (barra de status do Claude)
+let voice = null;     // v0.8: voz → texto (whisper.cpp local, um processo por frase)
+let shots = null;     // v0.8: recorte de tela → anexos/ → terminal
+let stopAnexosCleanup = null;
+let updater = null;   // v0.8: atualização automática (Windows: electron-updater; Mac: nossa, com DR conferido)
 const initialPrompts = new Map();   // terminal -> 1ª mensagem do Claude (entrevista guiada); usada uma vez
 const PLUGIN_DIR_NAME = 'plugin';
 let focusedTerm = null;          // terminal que o usuário está olhando no Mac (para não avisar dele)
@@ -90,6 +127,8 @@ app.on('web-contents-created', (_e, wc) => {
   });
   wc.on('will-redirect', (ev, url) => { if (preview.previews.has(wc) && !preview.allowNavigate(url)) ev.preventDefault(); });
   wc.on('will-attach-webview', ev => ev.preventDefault());
+  // erros de console só das nossas páginas (a prévia de localhost é o app do usuário: fica fora do log)
+  attachRenderer(log, wc, { allow: () => !preview.previews.has(wc) && isOurUrl(wc.getURL()) });
 });
 
 function secureWebPrefs() {
@@ -124,6 +163,9 @@ function handle(channel, fn) {
   });
 }
 
+// só para a janela do computador (progresso do download da voz, etc.): nunca vai ao celular
+function sendLocal(channel, payload) { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send(channel, payload); }
+
 function send(channel, payload) {
   if (channel === 'pty:exit' && hooks) hooks.reset(payload.id);
   if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send(channel, payload);
@@ -151,7 +193,7 @@ function copyPlugin(from, to) {
       }
     };
     walk(from, to);
-  } catch (e) { console.error('plugin da Bancada:', e.message); }
+  } catch (e) { console.error('plugin da Bancada:', e.message); log.error('main', 'cópia do plugin: ' + errText(e)); }
 }
 
 // ---------- estado do Claude (E1): bolinha na tela + aviso do macOS ----------
@@ -245,6 +287,7 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Abrir a Bancada', click: showMain },
     { label: plat.IS_WIN ? 'Anotar (Alt+Espaço)' : 'Anotar (⌥Space)', click: toggleCapture },
+    { label: 'Relatar problema…', click: () => { showMain(); mainWin.webContents.send('ui:report', {}); } },
     { type: 'separator' },
     { label: 'Sair', click: () => { app.isQuitting = true; app.quit(); } },
   ]));
@@ -255,7 +298,7 @@ function registerHotkey() {
   const key = store.kvGet('hotkey', HOTKEY_DEFAULT);
   globalShortcut.unregisterAll();
   const ok = globalShortcut.register(key, toggleCapture);
-  if (!ok) console.warn('[bancada] atalho global indisponível:', key);
+  if (!ok) { console.warn('[bancada] atalho global indisponível:', key); log.warn('main', `atalho global indisponível: ${key}`); }
   return ok;
 }
 
@@ -289,6 +332,22 @@ function routeCapture(text) {
 }
 function slug(s) { return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
 
+// ---------- relatar problema (v0.8) ----------
+// relatórios de travamento guardados pelo crashReporter (só a contagem; o conteúdo nunca sai daqui)
+function crashCount() {
+  let n = 0;
+  const walk = (d, depth) => { let ents = []; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of ents) { if (e.isDirectory() && depth < 2) walk(path.join(d, e.name), depth + 1); else if (/\.dmp$/i.test(e.name)) n++; } };
+  try { walk(app.getPath('crashDumps'), 0); } catch {}
+  return n;
+}
+const withTimeout = (p, ms, def) => Promise.race([p, new Promise(r => setTimeout(() => r(def), ms))]);
+async function diagnostic() {
+  const ais = await withTimeout(ai.statusAll().catch(() => null), 20000, null);
+  return buildReport({ version: app.getVersion(), packaged: app.isPackaged, platform: process.platform, release: os.release(), arch: process.arch,
+    electron: process.versions.electron, locale: app.getLocale(), uptimeMin: Math.round(process.uptime() / 60), crashes: crashCount(),
+    ais, logLines: log.tail(150), feedback: feedback ? feedback.list(20) : [] });
+}
+
 // ---------- IPC ----------
 function registerIpc() {
   handle('projects:list', () => store.listProjects());
@@ -300,7 +359,7 @@ function registerIpc() {
     return r;
   });
   handle('projects:swapFocus', (parkId, focusId) => store.swapFocus(v.id(parkId), v.id(focusId)));
-  handle('projects:discover', () => discoverProjects(projectsDir(), store.listProjects()));
+  handle('projects:discover', () => discoverProjects(projectsDir(), store.listProjects(), scanRoots()));
   handle('projects:git', (id) => { const p = store.getProject(v.id(id)); return p && p.paths[0] ? git.status(p.paths[0]) : null; });
   handle('projects:setActive', (id) => { activeProjectId = store.getProject(v.id(id)) ? id : 'inbox'; return true; });
 
@@ -391,6 +450,51 @@ function registerIpc() {
     return pasteFile(v.id(id), attachments.save(ANEXOS_DIR, img.toPNG()));
   });
   handle('attach:image', (id, o) => pasteFile(v.id(id), attachments.fromBase64(ANEXOS_DIR, o && o.b64)));
+  // v0.8 recorte de tela (E7): só no computador. O caminho do PNG é gerado aqui; a página só recebe um token + miniatura.
+  handle('shot:screen', async (id) => {
+    const r = await shots.capture(v.id(id));
+    if (r && !plat.IS_WIN) { try { r.perm = systemPreferences.getMediaAccessStatus('screen'); } catch {} }
+    return r;
+  });
+  handle('shot:send', (token) => { const p = shots.take(v.text(token, 64)); return pasteFile(p.termId, p.file); });
+  handle('shot:cancel', (token) => shots.discard(v.text(token, 64)));
+  handle('shot:abort', () => shots.abort());
+  // Checagem: só LÊ a permissão de Gravação de Tela (nunca pede; quem pergunta é o sistema no 1º recorte)
+  handle('shot:status', () => { let perm = null; if (!plat.IS_WIN) { try { perm = systemPreferences.getMediaAccessStatus('screen'); } catch {} } return { perm, checkup: shotCheckup(perm, { win: plat.IS_WIN }) }; });
+
+  // ---- voz → texto (v0.8, E6): só no computador (bloqueado no remoto). O texto cai no terminal SEM Enter (D-5). ----
+  // estado + permissão do microfone (só lê; quem pergunta é o sistema, na 1ª vez que o 🎤 é usado) + a Checagem pronta
+  const voiceStatus = () => {
+    const st = voice.status();
+    try { st.perm = { mic: systemPreferences.getMediaAccessStatus('microphone') }; } catch { st.perm = {}; }
+    st.checkup = voiceCheckup(st, { win: plat.IS_WIN });
+    return st;
+  };
+  // v0.8: atualização (só no computador; o remoto bloqueia o prefixo update:)
+  const noUpdater = () => ({ state: 'idle', current: app.getVersion(), auto: store.kvGet('update_auto', true) !== false, lastCheck: 0, platform: process.platform });
+  handle('update:status', () => (updater ? updater.status() : noUpdater()));
+  handle('update:check', () => (updater ? updater.check({ manual: true }) : noUpdater()));
+  handle('update:setAuto', (on) => { if (updater) return updater.setAuto(on === true); store.kvSet('update_auto', on === true); return noUpdater(); });
+  handle('voice:status', () => voiceStatus());
+  // ajuda fora da Bancada: só endereços fixos daqui (a página escolhe qual, nunca manda o endereço)
+  const HELP_URLS = { vc: 'https://aka.ms/vs/17/release/vc_redist.x64.exe',
+    mic: plat.IS_WIN ? 'ms-settings:privacy-microphone' : 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+    ...(plat.IS_WIN ? {} : { screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture' }) };
+  handle('voice:openHelp', (kind) => { const k = v.text(kind, 10); const u = Object.hasOwn(HELP_URLS, k) ? HELP_URLS[k] : null; if (typeof u !== 'string') throw Object.assign(new Error('ajuda desconhecida'), { code: 'INVALID' }); shell.openExternal(u); return true; });
+  handle('voice:download', async () => { const r = await voice.download(); voice.warmup(); return r; });
+  handle('voice:cancel', () => voice.cancel());
+  handle('voice:setModel', (id) => { const m = v.text(id, 10); voice.setModel(m); store.kvSet('voice_model', m); return voiceStatus(); });
+  handle('voice:transcribe', async (id, wav) => {
+    const tid = v.id(id);
+    if (!(wav instanceof Uint8Array) || wav.length > 2200000) throw Object.assign(new Error('áudio inválido'), { code: 'INVALID' });
+    const row = store.getTerminal(tid); const p = row ? store.getProject(row.project_id) : null;
+    const pl = p && pulse ? (pulse.list() || {})[p.id] : null;
+    const prompt = buildPrompt({ project: p ? p.name : '', dirs: p ? p.paths || [] : [], files: (pl && pl.git && pl.git.files) || [] });
+    const r = await voice.transcribe(wav, { prompt });
+    const pasted = !!r.text && ptys.paste(tid, r.text + ' ');
+    log.info('voz', `${r.seconds.toFixed(1)} s de fala → ${r.ms} ms${r.text ? '' : ' (sem texto)'}`);   // nunca o que foi dito
+    return { text: r.text, ms: r.ms, seconds: r.seconds, short: !!r.short, pasted };
+  });
 
   // ---- prévia de localhost (E5) e layout dos painéis (E3) ----
   handle('preview:open', (url) => preview.open(v.text(url, 2048)));
@@ -416,6 +520,7 @@ function registerIpc() {
   handle('ui:layoutSet', (tree) => { store.kvSet('pane_tree', v.paneTree(tree)); return true; });
   handle('terminals:byIds', (ids) => v.idList(ids, 8).map(id => store.getTerminal(id)).filter(Boolean));
   handle('activity:list', () => (activity ? activity.list() : {}));
+  handle('pulse:list', () => (pulse ? pulse.list() : {}));
   // v0.6: links no terminal (caminho de pasta/arquivo .md/arquivo, http). Caminho relativo: pasta do terminal e do projeto.
   handle('links:resolve', (termId, list) => {
     const row = store.getTerminal(v.text(termId, 120)); const p = row ? store.getProject(row.project_id) : null;
@@ -465,15 +570,17 @@ function registerIpc() {
     hotkey: store.kvGet('hotkey', HOTKEY_DEFAULT),
     focus_limit: store.focusLimit(),
     morning_time: store.kvGet('morning_time', '09:00'),
-    ai_summary: store.kvGet('ai_summary', true),
+    ai_summary: store.kvGet('ai_summary', false),
     theme: store.kvGet('theme', 'system'),
     onboarded: store.kvGet('onboarded', false),
     claude_skip_default: store.kvGet('claude_skip_default', false),
+    mac_perm_notice_ok: store.kvGet('mac_perm_notice_ok', false),
     promptpad_available: fs.existsSync(PROMPTPAD_FILE),
   }));
   handle('settings:set', (patch) => {
     const p = v.settings(patch);
     for (const [k, val] of Object.entries(p)) store.kvSet(k, val);
+    if ('ai_summary' in p) store.kvSet('ai_summary_asked', true);   // escolha explícita: o cartão "manter?" não aparece
     if ('hotkey' in p) registerHotkey();
     if ('morning_time' in p) morning.schedule();
     return true;
@@ -492,11 +599,23 @@ function registerIpc() {
     return { id: item.id, project: projectLabel(item.project_id) };
   });
   handle('capture:hide', () => { if (captureWin) captureWin.hide(); return true; });
+  // relatar problema: monta o diagnóstico redigido, copia e devolve para a prévia (só no computador; bloqueado no remoto)
+  handle('limits:get', () => (limits ? limits.list() : { accounts: [] }));
+  handle('feedback:current', () => (feedback ? feedback.current() : null));
+  handle('feedback:answer', (kind, answer, note) => feedback.answer(v.text(kind, 10), v.text(answer, 40), note == null ? '' : v.text(String(note), 1000)));
+  handle('feedback:dismiss', (kind) => feedback.dismiss(v.text(kind, 10)));
+  handle('diag:report', async () => {
+    const text = await diagnostic();
+    if (!process.env.BANCADA_SMOKE) clipboard.writeText(text);   // o smoke não mexe na área de transferência de verdade
+    log.info('main', 'diagnóstico copiado'); return { text, copied: true };
+  });
 }
 
 // ---------- smoke (só com BANCADA_SMOKE=<pasta>): print da janela + webPreferences reais, depois sai ----------
 function smoke(outDir) {
-  const steps = (process.env.BANCADA_SMOKE_STEPS || '').split('|||').filter(Boolean);
+  // passos grandes (ex.: áudio de teste da voz) vêm de um arquivo; o resto, da variável
+  const raw = process.env.BANCADA_SMOKE_STEPS_FILE ? fs.readFileSync(process.env.BANCADA_SMOKE_STEPS_FILE, 'utf8') : (process.env.BANCADA_SMOKE_STEPS || '');
+  const steps = raw.split('|||').filter(Boolean);
   mainWin.webContents.once('did-finish-load', async () => {
     const wait = (ms) => new Promise(r => setTimeout(r, ms));
     const series = []; const t0 = Date.now();
@@ -570,20 +689,63 @@ app.whenReady().then(() => {
   session.defaultSession.webRequest.onHeadersReceived((d, cb) => {
     cb({ responseHeaders: { ...d.responseHeaders, 'Content-Security-Policy': ["default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'"] } });
   });
-  session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  // v0.8: só o microfone (áudio, nada de câmera nem tela) e só para a janela principal da Bancada (nossos arquivos). A
+  // prévia de localhost tem sessão própria que nega tudo; o celular não tem microfone (HTTP). No smoke, sempre não.
+  session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => {
+    const types = (details && details.mediaTypes) || [];
+    const ok = perm === 'media' && types.length > 0 && types.every(t => t === 'audio') && !process.env.BANCADA_SMOKE &&
+      !!mainWin && !mainWin.isDestroyed() && wc === mainWin.webContents && !preview.previews.has(wc) && isOurUrl((details && details.requestingUrl) || wc.getURL());
+    if (!ok || plat.IS_WIN) return cb(ok);
+    // Mac: na 1ª vez quem pergunta é o sistema (em nome da Bancada, texto do NSMicrophoneUsageDescription); negado antes
+    // = não pergunta de novo, e a tela mostra como liberar em Ajustes do Sistema
+    const st = systemPreferences.getMediaAccessStatus('microphone');
+    if (st === 'granted') return cb(true);
+    if (st !== 'not-determined') return cb(false);
+    systemPreferences.askForMediaAccess('microphone').then((g) => cb(!!g), () => cb(false));
+  });
 
   fs.mkdirSync(USER_DIR, { recursive: true, mode: 0o700 });
-  store = open(path.join(USER_DIR, 'bancada.db'));
+  log.info('main', `Bancada ${app.getVersion()} aberta · ${process.platform} ${os.release()} ${process.arch} · Electron ${process.versions.electron}${app.isPackaged ? '' : ' · modo dev'}`);
+  const dbFile = path.join(USER_DIR, 'bancada.db');
+  const dbExisted = fs.existsSync(dbFile);
+  store = open(dbFile);
+  store.initAiSummary(dbExisted);
   fs.mkdirSync(ANEXOS_DIR, { recursive: true, mode: 0o700 });
-  hooks = new ClaudeHooks({ dir: path.join(USER_DIR, 'hooks'), onState: onClaudeState, onEvent: (id, ev) => { if (activity) activity.poke(id, ev); } });
+  // hooks → atividade: a atividade lê a lista oficial de tarefas e os subagentes que os hooks viram; os hooks não marcam
+  // "?" por silêncio enquanto a atividade vê algo em andamento
+  // v0.8: medidor de limite — a barra de status do Claude (encadeada com a do usuário) grava os números em hooks/limits
+  const statusLine = statusMeter.install({ dir: path.join(USER_DIR, 'hooks') });
+  if (!statusLine) log.warn('main', 'medidor de limite desligado: caminho da pasta de dados não serve para a barra de status');
+  hooks = new ClaudeHooks({ dir: path.join(USER_DIR, 'hooks'), onState: onClaudeState, onEvent: (id, ev) => { if (activity) activity.poke(id, ev); },
+    busy: (id) => !!(activity && activity.busy(id)), extra: () => (statusLine ? { statusLine } : {}) });
   hooks.setup(); hooks.start();
-  activity = new Activity({ statsFile: path.join(USER_DIR, 'hooks', 'duracoes.json'), onChange: (x) => send('activity:changed', x) }).start();
+  activity = new Activity({ statsFile: path.join(USER_DIR, 'hooks', 'duracoes.json'), onChange: (x) => send('activity:changed', x), hookInfo: (id) => hooks.get(id) }).start();
+  limits = new statusMeter.Limits({ dir: path.join(USER_DIR, 'hooks'), onChange: (x) => send('limits:changed', x) }).start();
   servers = new Servers({ file: path.join(USER_DIR, 'servidores.json'), onChange: (x) => send('servers:changed', x) }).start();
   copyPlugin(path.join(__dirname, '..', 'plugin'), path.join(USER_DIR, PLUGIN_DIR_NAME));
   try { attachments.cleanup(ANEXOS_DIR); } catch {}
+  stopAnexosCleanup = attachments.scheduleCleanup(ANEXOS_DIR);   // e a cada 6 h com o app aberto (14 dias)
+  shots = new ScreenShot({ win: plat.IS_WIN, exec: execFile, openExternal: (u) => shell.openExternal(u), clipboard,
+    save: (buf) => attachments.save(ANEXOS_DIR, buf), reserve: () => attachments.reserve(ANEXOS_DIR), adopt: attachments.adopt,
+    thumb: (file) => { if (!attachments.fitsForDecode(file)) return {}; const img = nativeImage.createFromPath(file); const s = img.getSize(); const t = s.width > 640 ? img.resize({ width: 640 }) : img; return { dataUrl: t.toDataURL(), width: s.width, height: s.height }; },
+    // smoke: a "captura" é um print da própria janela (nada de seletor do sistema nem área de transferência de verdade)
+    smokeImage: process.env.BANCADA_SMOKE ? async () => (await mainWin.webContents.capturePage()).toPNG() : null });
+  // voz: binário embutido + modelo em <dados>/voz (baixado sob demanda). Aquecimento em 2º plano (shaders do Metal) se
+  // o modelo já existe e o binário é novo; nunca no smoke.
+  voice = new Voice({ dir: path.join(USER_DIR, 'voz'), bin: whisperBin({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appRoot: path.join(__dirname, '..', '..') }),
+    log, model: store.kvGet('voice_model', 'turbo'), appVersion: app.getVersion(), onProgress: (p) => sendLocal('voice:progress', p) }).setup();
+  // 45 s depois de abrir: SHA-256 do modelo de novo se o marcador não vale (arquivo mudou ou app atualizado) e aquecimento
+  if (!process.env.BANCADA_SMOKE) setTimeout(() => { if (voice.status().model.present) voice.recheck().finally(() => voice.warmup()); }, 45000).unref();
   // BANCADA_AI_HOME: só para teste (instalar numa pasta isolada sem tocar no ~ de verdade)
   ai = new AiTools({ home: process.env.BANCADA_AI_HOME || os.homedir(), onLog: (m) => send('ai:log', m) });
   ptys = new PtyManager({ send, envPath: (p) => ai.envPath(p) });
+  // pulso de cada projeto (terminais comuns, servidor local, git, testes, Codex/Google pela saída). Tipo do terminal pelo
+  // comando de abertura salvo; terminal sem tipo com Claude de hooks conta como Claude.
+  pulse = new ProjectPulse({ ptys,
+    kindOf: (id) => { const r = store.getTerminal(id); const st = (r && r.startup) || ''; return /^bancada:codex/.test(st) ? 'codex' : /^bancada:agy/.test(st) ? 'agy' : (/^bancada:claude/.test(st) || hooks.get(id)) ? 'claude' : 'shell'; },
+    projectOf: (id) => { const r = store.getTerminal(id); return r ? r.project_id : null; },
+    dirOf: (pid) => { const p = store.getProject(pid); return p && p.paths && p.paths[0] ? p.paths[0] : null; },
+    git: (dir) => git.status(dir), onChange: (x) => send('pulse:changed', x) }).start();
   asks = new AskBroker({ dir: path.join(USER_DIR, 'perguntas'), store, onChange: (list) => send('asks:changed', list),
     onItems: (pid) => send('data:changed', { kind: 'items', project_id: pid }),
     // a conversa que perguntou morreu: a resposta vai como mensagem (colagem + Enter) — SÓ se o Claude ainda é o programa
@@ -597,6 +759,8 @@ app.whenReady().then(() => {
   engines = new EngineWatch({ store, onChange: (id) => send('engines:changed', { id }) });
   engines.checkAll();   // verifica a pasta de cada motor a cada abertura
   remote = new Remote({ store, rendererDir: RENDERER, handlers, keepAwake, port: Number(process.env.BANCADA_REMOTE_PORT) || undefined, onClientsChange: (n) => send('remote:clients', { n }) });
+  feedback = new Feedback({ store, busy: () => hooks.list().some(x => x.state === 'working'), onChange: (card) => send('feedback:card', card) });
+  onLogError = () => feedback.onError();
   morning = new Morning({ store, notify: (title, body) => { if (Notification.isSupported()) { const n = new Notification({ title, body }); n.on('click', showMain); n.show(); } } });
 
   if (process.env.BANCADA_SMOKE) store.kvSet('ai_summary', false);   // smoke nunca gasta IA
@@ -610,23 +774,37 @@ app.whenReady().then(() => {
   if (!process.env.BANCADA_SMOKE) registerHotkey();
   reader.start();
   morning.start();
+  if (!process.env.BANCADA_SMOKE || process.env.BANCADA_SMOKE_FEEDBACK) feedback.start();
   if (store.kvGet('remote_enabled', false)) remote.start().catch(() => {});
+  // v0.8: atualização — 1× por dia (desligável) + botão nos Ajustes; instala só ao sair. Nunca no smoke nem no modo dev.
+  updater = new Updater({ platform: process.platform, kv: { get: (k, d) => store.kvGet(k, d), set: (k, val) => store.kvSet(k, val) },
+    currentVersion: app.getVersion(), packaged: app.isPackaged && !process.env.BANCADA_SMOKE, dir: path.join(USER_DIR, 'atualizacao'),
+    app: bundleOf(process.execPath), log, onChange: (st) => sendLocal('update:changed', st),
+    makeWin: plat.IS_WIN ? () => require('electron-updater').autoUpdater : null });
+  updater.start().catch((e) => log.warn('atualização', e.message));
 
   if (app.isPackaged && store.kvGet('login_item', true)) app.setLoginItemSettings(plat.IS_WIN ? { openAtLogin: true, args: ['--hidden'] } : { openAtLogin: true, openAsHidden: true });
   app.on('activate', showMain);
   app.on('second-instance', showMain);
 });
 
-app.on('before-quit', () => { app.isQuitting = true; });
+app.on('before-quit', () => { app.isQuitting = true; if (updater) updater.onBeforeQuit(); });   // Windows: instala só o arquivo conferido
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  if (updater) { updater.onQuit(process.pid); updater.stop(); }
   if (ptys) ptys.killAll();
   if (reader) reader.stop();
   if (summarizer) summarizer.stop();
   if (morning) morning.stop();
+  if (feedback) feedback.stop();
+  if (voice) voice.shutdown();   // download, transcrição em andamento e o WAV dela
+  if (shots) { shots.abort(); shots.dropAll(); }
+  if (stopAnexosCleanup) stopAnexosCleanup();
+  if (limits) limits.stop();
   if (engines) engines.stop();
   if (hooks) hooks.stop();
   if (activity) activity.stop();
+  if (pulse) pulse.stop();
   if (servers) servers.stop();
   if (asks) asks.stop();
   if (remote) remote.stop();

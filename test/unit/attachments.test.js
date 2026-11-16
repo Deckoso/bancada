@@ -45,3 +45,44 @@ test('CP-8: medidor soma o usage da última resposta e só lê transcrição de 
   assert.equal(meter.measure(fora, { root }), null);
   assert.equal(meter.measure('/etc/passwd', { root }), null);
 });
+
+test('teto de pixels pelo cabeçalho (PNG, JPEG, GIF, WebP) antes de decodificar: acima de ~50 MP recusa e apaga', () => {
+  const att = require('../../app/main/attachments');
+  const fsx = require('fs'); const osx = require('os'); const px = require('path');
+  const png = (w, h) => { const b = Buffer.alloc(64); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b); b.writeUInt32BE(13, 8); b.write('IHDR', 12, 'latin1'); b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20); return b; };
+  const jpg = (w, h) => Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, h >> 8, h & 255, w >> 8, w & 255, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const gif = (w, h) => { const b = Buffer.alloc(16); b.write('GIF89a', 0, 'latin1'); b.writeUInt16LE(w, 6); b.writeUInt16LE(h, 8); return b; };
+  const webpx = (w, h) => { const b = Buffer.alloc(40); b.write('RIFF', 0, 'latin1'); b.write('WEBPVP8X', 8, 'latin1'); b.writeUIntLE(w - 1, 24, 3); b.writeUIntLE(h - 1, 27, 3); return b; };
+  assert.deepEqual(att.imageSize(png(1920, 1080)), { width: 1920, height: 1080 });
+  assert.deepEqual(att.imageSize(jpg(4000, 3000)), { width: 4000, height: 3000 });
+  assert.deepEqual(att.imageSize(gif(300, 200)), { width: 300, height: 200 });
+  assert.deepEqual(att.imageSize(webpx(5000, 4000)), { width: 5000, height: 4000 });
+  for (const b of [png(20000, 20000), jpg(60000, 60000), gif(65535, 65535), webpx(16000, 16000)]) assert.equal(att.tooManyPixels(b), true);
+  for (const b of [png(7680, 4320), jpg(6000, 4000)]) assert.equal(att.tooManyPixels(b), false, 'tela 8K e foto de 24 MP passam');
+  const dir = fsx.mkdtempSync(px.join(osx.tmpdir(), 'anexo-px-'));
+  try {
+    assert.throws(() => att.save(dir, png(20000, 20000)), /50 megapixels/);
+    const f = att.reserve(dir); fsx.writeFileSync(f, png(20000, 20000));
+    assert.throws(() => att.adopt(f), /50 megapixels/); assert.equal(fsx.existsSync(f), false, 'apagado');
+    const ok = att.reserve(dir); fsx.writeFileSync(ok, png(1920, 1080));
+    assert.equal(att.adopt(ok), ok, 'recorte comum aceito');
+    assert.equal(att.fitsForDecode(ok), true);
+    const big = att.reserve(dir); fsx.writeFileSync(big, png(20000, 20000)); assert.equal(att.fitsForDecode(big), false);
+  } finally { fsx.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('limpeza de anexos/ também com o app aberto: a cada 6 h, um timer só, parado ao sair', () => {
+  const att = require('../../app/main/attachments');
+  const fsx = require('fs'); const osx = require('os'); const px = require('path');
+  const dir = fsx.mkdtempSync(px.join(osx.tmpdir(), 'anexo-limpa-'));
+  try {
+    let now = Date.parse('2026-11-16T12:00:00Z');
+    fsx.mkdirSync(px.join(dir, '2026-11-10')); fsx.writeFileSync(px.join(dir, '2026-11-10', 'a.png'), 'x');
+    const timers = { fns: new Map(), n: 0, setInterval(fn, ms) { this.ms = ms; const id = ++this.n; this.fns.set(id, fn); return id; }, clearInterval(id) { this.fns.delete(id); }, tick() { for (const f of this.fns.values()) f(); } };
+    const stop = att.scheduleCleanup(dir, { timers, now: () => now });
+    assert.equal(timers.ms, 6 * 3600 * 1000); assert.equal(timers.fns.size, 1);
+    timers.tick(); assert.ok(fsx.existsSync(px.join(dir, '2026-11-10')), '6 dias: fica');
+    now += 9 * 86400000; timers.tick(); assert.ok(!fsx.existsSync(px.join(dir, '2026-11-10')), '15 dias com o app aberto: apagada');
+    stop(); assert.equal(timers.fns.size, 0);
+  } finally { fsx.rmSync(dir, { recursive: true, force: true }); }
+});

@@ -1,0 +1,7 @@
+{"scenario":"Codex (sem hooks): trabalhando enquanto o terminal mostra atividade; sofá quando para"}
+{"t":0,"pty":"t3","kind":"codex","fg":"codex","data":"› corrige o lint\r\n"}
+{"t":1000,"pty":"t3","fg":"codex","data":"• Working (1s • esc to interrupt)\r"}
+{"t":1500,"expect":{"term":"t3","pose":"work","label":"ativo pelo terminal"}}
+{"t":4000,"pty":"t3","fg":"codex","data":"• Working (4s • esc to interrupt)\r"}
+{"t":5000,"expect":{"term":"t3","pose":"work"}}
+{"t":180000,"expect":{"term":"t3","pose":"sofa"}}

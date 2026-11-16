@@ -97,7 +97,7 @@
       c.classList.add('xwide');
       const actions = h('div', { class: 'row wrap' },
         B.files.openInCursor ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => B.files.openInCursor(p.id, st.root, rel).catch(e => toast(e.message)) }, 'Abrir no Cursor') : null,
-        B.files.reveal ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => B.files.reveal(p.id, st.root, rel).catch(e => toast(e.message)) }, 'Mostrar no Finder') : null,
+        B.files.reveal ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => B.files.reveal(p.id, st.root, rel).catch(e => toast(e.message)) }, window.UI.T.reveal) : null,
         h('button', { class: 'aurora-btn aurora-btn--glass sm', title: 'Cola o caminho no terminal em foco', onclick: async () => { if (await st.ctx.pasteToTerminal(quote(abs) + ' ')) close(); } }, 'Colar caminho no terminal'),
         m().get(rel) ? h('button', { class: 'aurora-btn aurora-btn--glass sm', onclick: () => { close(); showDiff(rel); } }, 'Ver mudanças') : null,
         h('button', { class: 'aurora-btn aurora-btn--text sm', onclick: close }, 'Fechar'));
@@ -120,6 +120,7 @@
   function paintChanges() {
     const p = st.project; const body = clear(st.body);
     const s = st.status;
+    if (s && s.paused) { body.appendChild(h('div', { class: 'fp-empty muted', text: s.reason + '. O git automático da Bancada fica desligado nesta pasta; use o terminal se confiar nela.' })); return; }
     if (!s || !s.git) { body.appendChild(h('div', { class: 'fp-empty muted', text: 'Esta pasta não é um repositório git.' })); return; }
     const list = s.files;
     for (const k of Object.keys(st.picked)) if (!list.some(f => f.path === k)) delete st.picked[k];

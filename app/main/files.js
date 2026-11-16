@@ -1,9 +1,9 @@
 // Aba Arquivos (BP-2026-11-05-001 E2): árvore do projeto, só leitura. Guarda D7: todo caminho pedido precisa ficar
 // DENTRO da pasta do projeto depois de resolver links simbólicos (vale para o Mac e para o celular).
 'use strict';
-// Segurança: um .git/config de repositório baixado pode mandar o git rodar programa (core.fsmonitor) num simples
-// status; a Bancada roda git sozinha em toda pasta de projeto. Esses -c valem mais que o config do repositório.
-const SAFE_GIT = ['-c', 'core.fsmonitor=false'];   // diff já vai com --no-ext-diff --no-textconv
+// Segurança: um .git/config de repositório baixado pode mandar o git rodar programa (fsmonitor, filtro, gpg…) num simples
+// status/log; a Bancada roda git sozinha em toda pasta de projeto → git-safe confere a config antes e pausa se for o caso.
+const { SAFE_GIT, check: gitSafe } = require('./git-safe');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -32,6 +32,7 @@ function resolveInside(root, rel) {
 }
 
 function git(root, args, { maxBuffer = 8 * 1024 * 1024, timeout = 6000 } = {}) {
+  if (!gitSafe(root).ok) return Promise.resolve(null);   // pausado: a árvore cai na leitura da pasta
   return new Promise((resolve) => {
     execFile('git', [...SAFE_GIT, '-C', root, ...args], { timeout, maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } },
       (err, stdout) => resolve(err ? null : stdout));

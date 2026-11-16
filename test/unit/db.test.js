@@ -53,3 +53,16 @@ test('campo fora da lista não é gravado (sem SQL injection por nome de coluna)
   assert.equal(s.getProject(p.id).name, 'Q');
   assert.ok(s.db.prepare("SELECT name FROM sqlite_master WHERE name='items'").get());
 });
+
+test('resumo por IA: instalação nova começa desligada; quem já tinha banco mantém o que tinha', () => {
+  const novo = open(':memory:');
+  assert.equal(novo.initAiSummary(false), false);
+  const antigo = open(':memory:');
+  assert.equal(antigo.initAiSummary(true), true, 'já usava (padrão antigo era ligado) → continua ligado');
+  const desligou = open(':memory:');
+  desligou.kvSet('ai_summary', false);
+  assert.equal(desligou.initAiSummary(true), false, 'quem desligou continua desligado');
+  const respondeu = open(':memory:');
+  respondeu.initAiSummary(false); respondeu.kvSet('ai_summary', true);
+  assert.equal(respondeu.initAiSummary(false), true, 'a resposta da boas-vindas não é desfeita na próxima abertura');
+});

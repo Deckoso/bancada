@@ -1,8 +1,8 @@
 // git só leitura por projeto (branch, mudanças pendentes, último commit). Nunca escreve no repositório.
 'use strict';
-// Segurança: um .git/config de repositório baixado pode mandar o git rodar programa (core.fsmonitor) num simples
-// status; a Bancada roda git sozinha em toda pasta de projeto. Esses -c valem mais que o config do repositório.
-const SAFE_GIT = ['-c', 'core.fsmonitor=false'];   // diff já vai com --no-ext-diff --no-textconv
+// Segurança: um .git/config de repositório baixado pode mandar o git rodar programa (fsmonitor, filtro, gpg…) num simples
+// status/log; a Bancada roda git sozinha em toda pasta de projeto → git-safe confere a config antes e pausa se for o caso.
+const { SAFE_GIT, check: gitSafe } = require('./git-safe');
 const { execFile } = require('child_process');
 
 function run(dir, args) {
@@ -13,12 +13,14 @@ function run(dir, args) {
 }
 
 async function status(dir) {
+  const safe = gitSafe(dir);
+  if (!safe.ok) return { paused: true, reason: safe.reason, branch: null, changed: 0, files: [], last: null };
   const st = await run(dir, ['status', '--porcelain=v1', '-b']);
   if (st == null) return null;
   const lines = st.split('\n').filter(Boolean);
   const head = lines.shift() || '';
   const branch = (/^## No commits yet on (\S+)/.exec(head) || /^## ([^.\s]+)/.exec(head) || [])[1] || null;
-  const log = await run(dir, ['log', '-1', '--format=%h%x1f%s%x1f%ct']);
+  const log = await run(dir, ['log', '-1', '--no-textconv', '--no-ext-diff', '--format=%h%x1f%s%x1f%ct']);
   let last = null;
   if (log) { const [hash, subject, ct] = log.trim().split('\x1f'); last = { hash, subject, at: Number(ct) * 1000 }; }
   return { branch, changed: lines.length, files: lines.slice(0, 8).map(l => l.slice(3)), last };

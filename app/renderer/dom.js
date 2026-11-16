@@ -58,6 +58,8 @@
     const onKey = (e) => { if (e.key === 'Escape' && !opts.noEscape) { e.stopPropagation(); close(); } };
     document.addEventListener('keydown', onKey, true);
     currentClose = close;
+    // como o h(): partes condicionais (null/false) não viram o texto "null" no cartão
+    card.append = (...kids) => Element.prototype.append.apply(card, kids.flat().filter(k => k != null && k !== false));
     build(card, close);
     m.classList.remove('hidden');
     const f = card.querySelector('[autofocus], input, textarea, button'); if (f) f.focus();
@@ -87,5 +89,56 @@
     });
   }
 
-  window.UI = { h, clear, $, ago, today, toast, modal, editable, errCode };
+  // Textos que mudam com o sistema do COMPUTADOR (no celular, o platform é o do computador ao qual ele está ligado).
+  // Toda menção a Mac/Finder/Safari/⌘ na tela passa por aqui — o teste de textos por sistema confere.
+  const PC = !!(window.bancada && window.bancada.platform === 'win32');
+  const T = Object.freeze({
+    win: PC,
+    host: PC ? 'PC' : 'Mac',                                   // "neste Mac" / "neste PC"
+    files: PC ? 'Explorador' : 'Finder',                       // gerenciador de arquivos
+    reveal: PC ? 'Mostrar no Explorador' : 'Mostrar no Finder',
+    browser: PC ? 'navegador' : 'Safari',
+    terminal: PC ? 'PowerShell' : 'Terminal do Mac',           // terminal do sistema, fora da Bancada
+    enter: PC ? 'Ctrl+Enter' : '⌘↩',
+    paste: PC ? 'Ctrl+V' : '⌘V',
+    // v0.8 voz e recorte de tela
+    voiceKey: PC ? 'Ctrl+Shift+M' : '⌘⇧M',
+    shotKey: PC ? 'Ctrl+Shift+R' : '⌘⇧R',
+    screenHelp: PC ? '' : 'Ajustes do Sistema → Privacidade e Segurança → Gravação de Tela e Áudio do Sistema → ligue a Bancada. Depois feche e abra a Bancada.',
+    shotTool: PC ? 'Ferramenta de Captura' : 'seletor de recorte do Mac',
+    // celular: o navegador só libera o microfone em HTTPS, e o acesso remoto é HTTP dentro do Tailscale
+    voiceRemote: 'Voz só no computador',
+    micHelp: PC ? 'Configurações → Privacidade e segurança → Microfone: ligue "Acesso ao microfone" e "Permitir que aplicativos da área de trabalho acessem o microfone". Depois tente de novo.'
+      : 'Ajustes do Sistema → Privacidade e Segurança → Microfone → ligue a Bancada. Depois feche e abra a Bancada.',
+  });
+  // Mac: no macOS a permissão de microfone/gravação de tela vale para o app E para tudo que roda dentro dele (como no
+  // Terminal do Mac). Antes do 1º uso do 🎤/📷 no Mac, avisa uma vez (Continuar/Cancelar). true = pode seguir.
+  const PERM_TEXT = PC ? '' : 'Ao permitir microfone/gravação de tela para a Bancada, os programas que rodam nos terminais dela também passam a poder usar — como acontece com o Terminal do Mac.';
+  let permAsking = null;
+  async function macPermNeeded() {
+    if (PC || window.__REMOTE || !window.bancada || !window.bancada.settings) return false;
+    try { return !(await window.bancada.settings.get()).mac_perm_notice_ok; } catch { return false; }
+  }
+  async function macPermNotice(what) {
+    if (!(await macPermNeeded())) return true;
+    if (permAsking) return permAsking;
+    permAsking = new Promise((resolve) => {
+      let answer = false;
+      modal((c, close) => {
+        c.append(h('h2', { text: what === 'tela' ? 'Antes do primeiro recorte de tela' : 'Antes de usar o microfone' }),
+          h('p', { text: PERM_TEXT }),
+          h('p', { class: 'muted small', text: 'O macOS pergunta uma vez e lembra. Dá para tirar a permissão quando quiser em Ajustes do Sistema → Privacidade e Segurança.' }),
+          h('div', { class: 'row' },
+            h('button', { class: 'aurora-btn aurora-btn--primary', onclick: () => { answer = true; close(); } }, 'Continuar'),
+            h('button', { class: 'aurora-btn aurora-btn--text', onclick: () => close() }, 'Cancelar')));
+      }, { onClose: () => {
+        permAsking = null;
+        if (answer) window.bancada.settings.set({ mac_perm_notice_ok: true }).catch(() => {});
+        resolve(answer);
+      } });
+    });
+    return permAsking;
+  }
+
+  window.UI = { h, clear, $, ago, today, toast, modal, editable, errCode, T, macPermNotice, macPermNeeded, PERM_TEXT };
 })();

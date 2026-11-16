@@ -1,0 +1,14 @@
+{"scenario":"agente em primeiro plano: entra no SubagentStart (antes do meta.json), sai no SubagentStop"}
+{"t":0,"term":"t1","hook":"UserPromptSubmit","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"explora o código"}}
+{"t":1000,"tr":{"type":"assistant","sessionId":"sess-exemplo","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_e1","name":"Agent","input":{"description":"Mapear o código","subagent_type":"Explore","prompt":"..."}}]}}}
+{"t":1010,"term":"t1","hook":"PreToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Agent","tool_use_id":"toolu_e1"}}
+{"t":1020,"term":"t1","hook":"SubagentStart","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"SubagentStart","agent_id":"a5fg00005","agent_type":"Explore"}}
+{"t":1500,"expect":{"state":"working","pose":"work","label":"Agente","agents":1}}
+{"t":5000,"term":"t1","hook":"PreToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Glob","tool_use_id":"toolu_e2","agent_id":"a5fg00005","agent_type":"Explore"}}
+{"t":5500,"expect":{"pose":"work","agents":1,"agentVerb":{"a5fg00005":"Procurando"}}}
+{"t":20000,"term":"t1","hook":"SubagentStop","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"SubagentStop","agent_id":"a5fg00005","agent_type":"Explore","agent_transcript_path":"$SUB/agent-a5fg00005.jsonl","background_tasks":[]}}
+{"t":21000,"expect":{"agents":0}}
+{"t":21000,"tr":{"type":"user","sessionId":"sess-exemplo","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_e1","content":[{"type":"text","text":"mapa pronto"}]}]}}}
+{"t":21100,"term":"t1","hook":"PostToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PostToolUse","tool_name":"Agent","tool_use_id":"toolu_e1"}}
+{"t":25000,"term":"t1","hook":"Stop","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"Stop","background_tasks":[]}}
+{"t":26000,"expect":{"state":"done","pose":"sofa","agents":0}}

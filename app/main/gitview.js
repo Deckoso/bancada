@@ -1,9 +1,9 @@
 // Aba Mudanças (BP-2026-11-05-001 E2): o que mudou desde o último commit, diff por arquivo e commit dos SELECIONADOS.
 // Nunca faz push. Sempre execFile (sem shell) e "--" antes dos caminhos; cada caminho passa pela guarda do files.js.
 'use strict';
-// Segurança: um .git/config de repositório baixado pode mandar o git rodar programa (core.fsmonitor) num simples
-// status; a Bancada roda git sozinha em toda pasta de projeto. Esses -c valem mais que o config do repositório.
-const SAFE_GIT = ['-c', 'core.fsmonitor=false'];   // diff já vai com --no-ext-diff --no-textconv
+// Segurança: um .git/config de repositório baixado pode mandar o git rodar programa (fsmonitor, filtro, gpg…) num simples
+// status/log; a Bancada roda git sozinha em toda pasta de projeto → git-safe confere a config antes e pausa se for o caso.
+const { SAFE_GIT, check: gitSafe } = require('./git-safe');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -13,6 +13,8 @@ const MAX_DIFF = 1024 * 1024;
 const MAX_ENTRIES = 2000;
 
 function run(root, args, { timeout = 8000, maxBuffer = 4 * 1024 * 1024, input } = {}) {
+  const safe = gitSafe(root);
+  if (!safe.ok) return Promise.resolve({ ok: false, out: '', err: safe.reason, paused: true });
   return new Promise((resolve) => {
     const p = execFile('git', [...SAFE_GIT, '-C', root, ...args], { timeout, maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } },
       (err, stdout, stderr) => resolve({ ok: !err, out: String(stdout || ''), err: String(stderr || (err && err.message) || '') }));
@@ -39,6 +41,8 @@ function parseStatus(raw, prefix = '') {
 function codeOf(xy) { const c = xy[1] !== '.' ? xy[1] : xy[0]; return c === 'M' || c === 'A' || c === 'D' || c === 'R' || c === 'C' ? (c === 'C' ? 'A' : c) : 'M'; }
 
 async function status(root) {
+  const safe = gitSafe(root);
+  if (!safe.ok) return { git: false, paused: true, reason: safe.reason, files: [] };
   const top = await run(root, ['rev-parse', '--show-prefix']);
   if (!top.ok) return { git: false, files: [] };
   const prefix = top.out.trim();
@@ -51,6 +55,7 @@ async function status(root) {
 async function diff(root, rel) {
   const abs = resolveInsideOrDeleted(root, rel);
   const st = await status(root);
+  if (st.paused) return { text: '', note: st.reason };
   const entry = st.files.find(f => f.path === rel);
   if (!entry) return { text: '', note: 'sem mudanças neste arquivo' };
   if (entry.code === '?' || (entry.code === 'A' && !(await run(root, ['rev-parse', '--verify', 'HEAD'])).ok)) {
@@ -83,6 +88,7 @@ async function commit(root, files, message) {
   const msg = String(message || '').trim();
   if (!msg) { const e = new Error('escreva a mensagem do commit'); e.code = 'INVALID'; throw e; }
   const st = await status(root);
+  if (st.paused) { const e = new Error(st.reason); e.code = 'GIT_PAUSED'; throw e; }
   if (!st.git) { const e = new Error('esta pasta não é um repositório git'); e.code = 'INVALID'; throw e; }
   const changed = new Map(st.files.map(f => [f.path, f]));
   const pick = [...new Set(files)];

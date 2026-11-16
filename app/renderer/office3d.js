@@ -2,7 +2,10 @@
 // Tudo feito por código (sem modelo 3D, sem imagem): mesas, lounge, sala de reunião e sala de servidores de vidro.
 // Os bonecos são os Claudes (crachá na cor do terminal) e os agentes que eles chamam; cada um anima o que está fazendo
 // (digitar, ler, pesquisar, rodar comando, levantar a mão quando espera você, sofá/café quando parado).
-// Zero IA: só desenha o que o processo principal já sabe (activity:changed, servers:changed).
+// Zero IA: só desenha o que o processo principal já sabe (activity:changed, pulse:changed, servers:changed).
+// v0.8: "acompanhando" (turno acabou, coisas rodando: o boneco fica na estação da tarefa, olhando a tela), estações que
+// aparecem conforme o número de tarefas, bancada de ferramentas (terminais comuns: npm run dev, testes…), quadro do projeto
+// (git, servidor, testes) e cartão "o quê · há quanto tempo · última linha" ao passar o mouse ou tocar.
 // CPU/memória: desenha só quando algo mexe (0 quadros/s com a sala parada), no máximo 30 quadros/s, nada com a janela
 // escondida; tudo o que é criado no mount é liberado no unmount (geometria, material, textura, renderer).
 import * as THREE from './vendor/three/three.module.js';
@@ -29,7 +32,13 @@ const MEET_SEATS = [];
 for (let i = 0; i < 4; i++) { MEET_SEATS.push({ x: 2.2 + i * 1.0, z: -6.5, ry: Math.PI }); MEET_SEATS.push({ x: 2.2 + i * 1.0, z: -4.0, ry: 0 }); }
 const SOFA_SPOTS = [{ x: 6.0, z: 7.35 }, { x: 7.0, z: 7.35 }, { x: 8.0, z: 7.35 }, { x: 9.0, z: 7.35 }, { x: 11.05, z: 6.1 }, { x: 11.05, z: 5.1 }];
 const COFFEE = { x: 13.0, z: 2.2 };
-const STATIONS = [{ x: -1.2, z: 3.6 }, { x: -1.2, z: 5.4 }, { x: -1.2, z: 7.2 }];
+// estações de tarefa em segundo plano: 3 sempre à vista, mais 3 que aparecem quando há mais tarefas
+const STATIONS = [{ x: -1.2, z: 3.6 }, { x: -1.2, z: 5.4 }, { x: -1.2, z: 7.2 }, { x: 1.6, z: 3.6 }, { x: 1.6, z: 5.4 }, { x: 1.6, z: 7.2 }];
+const BASE_STATIONS = 3;
+// bancada de ferramentas (terminais comuns) e o lugar de quem acompanha só agentes (olhando a sala de reunião)
+const BENCH = { x: -7.6, z: 6.4, len: 7.2, slots: 4 };
+const WATCH_MEET = [{ x: 1.4, z: -1.2 }, { x: 2.2, z: -1.2 }, { x: 3.0, z: -1.2 }, { x: 3.8, z: -1.2 }];
+const OM = () => window.OfficeModel || null;
 
 function supported() {
   try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; }
@@ -207,18 +216,43 @@ function buildRoom() {
   cyl(0.2, 0.2, 1.0, mat('pot'), 14.3, 0.5, 3.4, 14); cyl(0.17, 0.17, 0.45, mat('water', { color: '#9ec9ff', transparent: true, opacity: 0.6, roughness: 0.1 }), 14.3, 1.22, 3.4, 14);
   block(14.0, 3.1, 14.6, 3.7, 0.1);
 
-  // estações de tarefa em segundo plano (quiosques com barra de progresso)
-  S.stations = STATIONS.map((p) => {
-    const g = new THREE.Group(); g.position.set(p.x, 0, p.z); room.add(g);
+  // estações de tarefa em segundo plano (quiosques com barra de progresso); as extras só aparecem quando há tarefa
+  S.stations = STATIONS.map((p, i) => {
+    const g = new THREE.Group(); g.position.set(p.x, 0, p.z); room.add(g); g.visible = i < BASE_STATIONS;
     rbox(0.6, 1.1, 0.5, 0.1, mat('bezel'), 0, 0.55, 0, { parent: g });
     const tex = canvasTex(192, 96);
     const scr = new THREE.Mesh(geo('stscr', () => new THREE.PlaneGeometry(0.5, 0.25)), track(new THREE.MeshBasicMaterial({ map: tex.t, toneMapped: false })));
     scr.position.set(-0.31, 0.92, 0); scr.rotation.y = -Math.PI / 2; g.add(scr);
+    scr.userData.station = i; S.pick.push(scr);
+    const led = box(0.42, 0.02, 0.02, track(new THREE.MeshStandardMaterial({ color: P.frame, emissive: '#000000' })), -0.31, 1.12, 0, { parent: g, cast: false });
     block(p.x - 0.35, p.z - 0.3, p.x + 0.35, p.z + 0.3, 0.1);
-    const st = { g, tex, key: '', spot: { x: p.x - 0.95, z: p.z } };
+    const st = { g, tex, led, key: '', spot: { x: p.x - 0.95, z: p.z } };
     drawStation(st, null);
     return st;
   });
+
+  // bancada de ferramentas: os terminais comuns do projeto (npm run dev, testes, build), uma tela por terminal
+  const bg = new THREE.Group(); bg.position.set(BENCH.x, 0, BENCH.z); room.add(bg);
+  rbox(BENCH.len, 0.07, 0.8, 0.1, mat('top'), 0, 0.92, 0, { parent: bg });
+  for (const sx of [-BENCH.len / 2 + 0.2, BENCH.len / 2 - 0.2]) box(0.07, 0.9, 0.7, mat('metal'), sx, 0.45, 0, { parent: bg });
+  block(BENCH.x - BENCH.len / 2, BENCH.z - 0.4, BENCH.x + BENCH.len / 2, BENCH.z + 0.4);
+  S.bench = [];
+  for (let i = 0; i < BENCH.slots; i++) {
+    const x = -BENCH.len / 2 + (i + 0.5) * (BENCH.len / BENCH.slots);
+    const tex = canvasTex(256, 128);
+    const scr = new THREE.Mesh(geo('bscr', () => new THREE.PlaneGeometry(1.3, 0.65)), track(new THREE.MeshBasicMaterial({ map: tex.t, toneMapped: false })));
+    scr.position.set(x, 1.36, -0.05); scr.rotation.x = -0.12; bg.add(scr);
+    box(1.38, 0.72, 0.04, mat('bezel'), x, 1.36, -0.09, { parent: bg });
+    const led = box(1.2, 0.02, 0.02, track(new THREE.MeshStandardMaterial({ color: P.frame, emissive: '#000000' })), x, 0.9, 0.41, { parent: bg, cast: false });
+    scr.userData.bench = i; S.pick.push(scr);
+    const slot = { tex, led, key: '' }; S.bench.push(slot); drawBench(slot, null, 0);
+  }
+
+  // quadro do projeto (parede da esquerda): git, servidor local, testes
+  S.pboard = canvasTex(512, 300);
+  const pb = new THREE.Mesh(geo('pboard', () => new THREE.PlaneGeometry(3.6, 2.1)), track(new THREE.MeshBasicMaterial({ map: S.pboard.t, toneMapped: false })));
+  pb.position.set(ROOM.x0 + 0.03, 1.75, 3.2); pb.rotation.y = Math.PI / 2; room.add(pb); pb.userData.pboard = true; S.pick.push(pb);
+  drawProjectBoard(null, 0);
 
   // quadro de pendências e relógio na parede do fundo
   S.board = canvasTex(512, 300);
@@ -285,17 +319,61 @@ function drawMonitor(desk, info) {
   desk.led.material.emissiveIntensity = info ? 1.3 : 0;
 }
 
-function drawStation(st, task) {
-  const key = task ? `${task.what}|${task.pct}|${task.line}` : 'off';
+const mins = (ms) => { const m = Math.floor(Math.max(0, ms) / 60000); return m < 1 ? 'agora' : m < 60 ? `${m} min` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`; };
+function drawStation(st, task, now = Date.now()) {
+  // a hora entra na chave em minutos: a tela redesenha no máximo 1×/min (ou quando a tarefa muda)
+  const key = task ? `${task.what}|${task.pct}|${task.line}|${task.silent}|${mins(now - task.since)}|${task.kind}` : 'off';
   if (st.key === key) return; st.key = key;
   const { ctx, c, t } = st.tex;
   ctx.fillStyle = '#0b0b0e'; ctx.fillRect(0, 0, c.width, c.height);
   if (task) {
-    ctx.font = '600 16px -apple-system, sans-serif'; ctx.fillStyle = '#f5f5f7'; ctx.fillText(clip(task.what || 'tarefa', 18), 10, 26);
-    ctx.font = '12px Menlo, monospace'; ctx.fillStyle = '#a1a1aa'; ctx.fillText(clip(task.line || 'em segundo plano', 24), 10, 48);
-    rr(ctx, 10, 64, c.width - 20, 12, 6); ctx.fillStyle = '#26262c'; ctx.fill();
-    if (task.pct != null) { rr(ctx, 10, 64, Math.max(12, (c.width - 20) * task.pct / 100), 12, 6); ctx.fillStyle = S.pal.neon; ctx.fill(); }
+    const ic = { monitor: '👁 ', workflow: '🔀 ' }[task.kind] || '';
+    ctx.font = '600 16px -apple-system, sans-serif'; ctx.fillStyle = '#f5f5f7'; ctx.fillText(clip(ic + (task.what || 'tarefa'), 18), 10, 24);
+    ctx.font = '12px Menlo, monospace'; ctx.fillStyle = task.silent ? '#8e8e93' : '#a1a1aa';
+    ctx.fillText(clip(task.silent ? `em silêncio · ${mins(task.quietMs || 0)}` : (task.line || 'em segundo plano'), 24), 10, 44);
+    ctx.fillStyle = '#6e6e73'; ctx.fillText(`há ${mins(now - task.since)}`, 10, 60);
+    rr(ctx, 10, 72, c.width - 20, 10, 5); ctx.fillStyle = '#26262c'; ctx.fill();
+    if (task.pct != null) { rr(ctx, 10, 72, Math.max(10, (c.width - 20) * task.pct / 100), 10, 5); ctx.fillStyle = S.pal.neon; ctx.fill(); }
   }
+  t.needsUpdate = true;
+  if (st.led) { st.led.material.emissive.set(task ? (task.silent ? '#8e8e93' : S.pal.neon) : '#000000'); st.led.material.emissiveIntensity = task ? 1.2 : 0; }
+}
+
+function drawBench(slot, it, now) {
+  const key = it ? `${it.name}|${it.fg}|${it.active}|${it.line}|${it.url}|${it.since ? mins(now - it.since) : ''}|${S.pal.dark}` : 'off';
+  if (slot.key === key) return; slot.key = key;
+  const { ctx, c, t } = slot.tex;
+  ctx.fillStyle = '#0b0b0e'; ctx.fillRect(0, 0, c.width, c.height);
+  if (it) {
+    ctx.fillStyle = it.active ? '#30d158' : '#3a3a40'; ctx.fillRect(0, 0, c.width, 4);
+    ctx.font = '600 18px -apple-system, sans-serif'; ctx.fillStyle = '#f5f5f7'; ctx.fillText(clip(it.name || 'terminal', 20), 12, 30);
+    ctx.font = '14px Menlo, monospace'; ctx.fillStyle = it.active ? '#30d158' : '#8e8e93';
+    ctx.fillText(clip(it.active ? `▶ ${it.fg || 'rodando'}${it.since ? ' · ' + mins(now - it.since) : ''}` : 'parado', 30), 12, 54);
+    ctx.fillStyle = '#a1a1aa'; ctx.fillText(clip(it.line || '', 30), 12, 80);
+    if (it.url) { ctx.fillStyle = '#9d85ff'; ctx.fillText(clip(it.url.replace(/^https?:\/\//, ''), 30), 12, 106); }
+  } else {
+    ctx.font = '14px -apple-system, sans-serif'; ctx.fillStyle = '#3a3a40'; ctx.fillText('livre', 12, 70);
+  }
+  t.needsUpdate = true;
+  slot.led.material.emissive.set(it && it.active ? '#30d158' : '#000000'); slot.led.material.emissiveIntensity = it && it.active ? 1.2 : 0;
+}
+
+function drawProjectBoard(b, now) {
+  const g = b && b.git; const tests = b && b.tests; const srv = (b && b.servers) || [];
+  const key = JSON.stringify([g, tests && [tests.pass, tests.fail], srv, g && g.last ? mins(now - g.last.at) : '', S.pal.dark]);
+  if (S.pboardKey === key) return; S.pboardKey = key;
+  const { ctx, c, t } = S.pboard; const P = S.pal;
+  ctx.fillStyle = P.dark ? '#1b1b20' : '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = P.neon; ctx.fillRect(0, 0, c.width, 5);
+  ctx.font = '700 30px -apple-system, "SF Pro Display", sans-serif'; ctx.fillStyle = P.txt; ctx.fillText('Projeto', 24, 50);
+  ctx.font = '21px -apple-system, "SF Pro Text", sans-serif';
+  const row = (y, dot, txt) => { ctx.fillStyle = dot; ctx.beginPath(); ctx.arc(32, y - 7, 6, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = P.txt; ctx.fillText(clip(txt, 38), 48, y); };
+  if (!b) { ctx.fillStyle = P.sub; ctx.fillText('nenhum terminal aberto', 24, 100); t.needsUpdate = true; return; }
+  if (g && g.paused) { row(100, AMBER, 'git pausado: este repositório'); row(146, AMBER, 'define programas na configuração dele'); }
+  else row(100, g ? (g.changed ? AMBER : '#30d158') : '#8e8e93', g ? `${g.branch || 'git'} · ${g.changed ? `${g.changed} arquivo${g.changed > 1 ? 's' : ''} alterado${g.changed > 1 ? 's' : ''}` : 'tudo salvo'}` : 'sem git');
+  if (!(g && g.paused)) row(146, '#8e8e93', g && g.last ? `último commit há ${mins(now - g.last.at)}: ${g.last.subject}` : 'sem commit');
+  row(192, srv.length ? '#30d158' : '#8e8e93', srv.length ? `servidor ${srv[0].replace(/^https?:\/\//, '')}${srv.length > 1 ? ` +${srv.length - 1}` : ''}` : 'nenhum servidor local');
+  row(238, tests ? (tests.fail ? '#ff453a' : '#30d158') : '#8e8e93', tests ? (tests.fail ? `testes: ${tests.fail} falhando, ${tests.pass} ok` : `testes: ${tests.pass} ok`) : 'testes: nenhum visto');
   t.needsUpdate = true;
 }
 
@@ -388,7 +466,7 @@ function disposeActor(a) {
 }
 
 const ANIM_BY_VERB = { Editando: 'type', Escrevendo: 'type', Lendo: 'read', Procurando: 'read', Pesquisando: 'search', 'Lendo a web': 'search', Rodando: 'run', Vigiando: 'read', Agente: 'talk', 'Fluxo de agentes': 'talk', 'Organizando tarefas': 'type', 'Usando skill': 'read', 'Carregando ferramentas': 'read' };
-const ICON = { type: '⌨', read: '📖', search: '🔎', run: '▶', talk: '💬', think: '…', waiting: '✋', stalled: '?', sofa: '☕', machine: '⏳' };
+const ICON = { type: '⌨', read: '📖', search: '🔎', run: '▶', talk: '💬', think: '…', waiting: '✋', stalled: '?', sofa: '☕', machine: '⏳', watch: '👁', limit: '⏸', silent: '…' };
 
 // alvo de cada boneco (assento/sofá/estação/porta) a partir do modelo vindo do ActivityUI
 function assign(list) {
@@ -400,24 +478,28 @@ function assign(list) {
   for (const w of want.values()) {
     let a = S.actors.get(w.id);
     if (!a) { a = makeActor({ ...w, start: w.kind === 'agent' || S.started ? { ...DOOR } : { x: 6 + Math.random() * 4, z: 4 + Math.random() * 1.5 } }); S.actors.set(w.id, a); }
-    const prevMode = a.mode; Object.assign(a, { name: w.name, mode: w.mode, verb: w.verb, what: w.what, bubble: w.bubble, termId: w.termId, color: w.color, taskIdx: w.taskIdx });
+    const prevMode = a.mode; Object.assign(a, { name: w.name, mode: w.mode, verb: w.verb, what: w.what, bubble: w.bubble, termId: w.termId, color: w.color, taskIdx: w.taskIdx,
+      nTasks: w.nTasks || 0, count: w.count || 0, label: w.label || '', since: w.since || null, line: w.line || null, silent: !!w.silent, lastSignalAt: w.lastSignalAt || null, task: w.task || '' });
     if (a.badgeM.color.getHexString() !== new THREE.Color(w.color).getHexString()) { a.badgeM.color.set(w.color); a.badgeM.emissive.set(w.color); }
-    a.anim = w.mode === 'waiting' ? 'waiting' : w.mode === 'stalled' ? 'stalled' : (ANIM_BY_VERB[w.verb] || (w.mode === 'desk' ? 'think' : 'idle'));
+    a.anim = w.mode === 'waiting' ? 'waiting' : w.mode === 'stalled' ? 'stalled' : w.mode === 'follow' || w.mode === 'machine' ? 'watch' : w.mode === 'limit' ? 'limit'
+      : w.silent ? 'silent' : (ANIM_BY_VERB[w.verb] || (w.mode === 'desk' ? 'think' : 'idle'));
     // destino
     let dest = null; let pose = 'stand'; let face = 0;
-    if (w.mode === 'desk' || w.mode === 'stalled' || w.mode === 'waiting') {
+    if (w.mode === 'desk' || w.mode === 'stalled' || w.mode === 'waiting' || w.mode === 'limit') {
       if (w.kind === 'agent') {
         if (a.seat == null) { const k = MEET_SEATS.findIndex((_, i) => !usedSeat.has(i)); if (k >= 0) { a.seat = k; usedSeat.add(k); } }
         if (a.seat != null) { const s = MEET_SEATS[a.seat]; dest = s; pose = 'sit'; face = s.ry === 0 ? Math.PI : 0; }
       }
       if (!dest) {
         if (a.desk == null) { const k = S.desks.findIndex((_, i) => !usedDesk.has(i)); if (k >= 0) { a.desk = k; usedDesk.add(k); } }
-        if (a.desk != null) { const d = S.desks[a.desk]; dest = w.mode === 'waiting' ? { x: d.seat.x + 0.75, z: d.seat.z + 0.1 } : d.seat; pose = w.mode === 'waiting' ? 'stand' : 'sit'; face = Math.PI; }
+        if (a.desk != null) { const d = S.desks[a.desk]; const up = w.mode === 'waiting' || w.mode === 'limit'; dest = up ? { x: d.seat.x + 0.75, z: d.seat.z + 0.1 } : d.seat; pose = up ? 'stand' : 'sit'; face = Math.PI; }
       }
       if (!dest) dest = { x: -6 + (S.actors.size % 6) * 0.8, z: 8 };
       if (a.sofa != null) { usedSofa.delete(a.sofa); a.sofa = null; }
-    } else if (w.mode === 'machine') {
-      const st = S.stations[Math.min(S.stations.length - 1, Math.max(0, w.taskIdx || 0))]; dest = st.spot; face = Math.PI / 2;
+    } else if (w.mode === 'machine' || w.mode === 'follow') {
+      // acompanhando: na estação da 1ª tarefa dele; só agentes rodando → olhando a sala de reunião pelo vidro
+      if (w.nTasks > 0 || w.mode === 'machine') { const st = S.stations[Math.min(S.stations.length - 1, Math.max(0, w.taskIdx || 0))]; dest = st.spot; face = Math.PI / 2; }
+      else { const k = [...S.actors.values()].filter(x => x !== a && x.watchMeet != null).map(x => x.watchMeet); a.watchMeet = a.watchMeet != null && !k.includes(a.watchMeet) ? a.watchMeet : [0, 1, 2, 3].find(i => !k.includes(i)) ?? 0; dest = WATCH_MEET[a.watchMeet]; face = Math.PI; }
       if (a.sofa != null) { usedSofa.delete(a.sofa); a.sofa = null; }
     } else if (w.mode === 'leave') {
       dest = DOOR;
@@ -428,6 +510,7 @@ function assign(list) {
       dest = s; pose = a.sofa != null ? 'sofa' : 'stand'; face = a.sofa != null && a.sofa >= 4 ? -Math.PI / 2 : Math.PI;
       if (!a.nextWander) a.nextWander = performance.now() + 30000 + Math.random() * 60000;
     }
+    if (w.mode !== 'follow' && w.mode !== 'machine') a.watchMeet = null;
     if (w.kind === 'agent' && w.mode !== 'desk' && w.mode !== 'stalled' && w.mode !== 'waiting' && a.seat != null) { usedSeat.delete(a.seat); a.seat = null; }
     a.face = face; a.wantPose = pose;
     if (!a.dest || Math.hypot(a.dest.x - dest.x, a.dest.z - dest.z) > 0.05 || prevMode === 'leave') route(a, dest);
@@ -468,6 +551,14 @@ function animate(a, dt, t) {
     else if (a.wantPose === 'sofa') { a.armL.rotation.z = 0.25; a.armR.rotation.z = -0.25; a.torso.rotation.x = -0.12; }
   } else if (a.anim === 'waiting') {
     a.armR.rotation.z = -2.7 + Math.sin(w * 5) * 0.25; a.head.rotation.x = -0.1;
+  } else if (a.anim === 'watch') {
+    // acompanhando: olha a tela, mão no queixo, balança de leve e de vez em quando confere o relógio do pulso
+    a.head.rotation.x = 0.12 + Math.sin(w * 1.1) * 0.06; a.head.rotation.y = Math.sin(w * 0.45) * 0.3;
+    a.armR.rotation.x = -2.0; a.armR.rotation.z = -0.35; a.armL.rotation.x = Math.sin(w * 0.3) > 0.85 ? -1.2 : -0.2;
+    a.torso.rotation.z = Math.sin(w * 0.8) * 0.03;
+  } else if (a.anim === 'limit') {
+    a.armL.rotation.x = a.armR.rotation.x = -1.25; a.armL.rotation.z = 0.7; a.armR.rotation.z = -0.7;   // braços cruzados
+    a.head.rotation.z = Math.sin(w * 0.6) * 0.1; a.torso.rotation.z = Math.sin(w * 0.6) * 0.03;
   }
   // respirar e piscar (só quando a sala está viva; parado no sofá fica estático = 0 quadros/s)
   a.torso.scale.y = 1 + Math.sin(w * 2.2) * 0.012;
@@ -481,7 +572,7 @@ function animate(a, dt, t) {
   return moving;
 }
 function lerpAngle(a, b, k) { let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI; if (d < -Math.PI) d += Math.PI * 2; return a + d * k; }
-function isLive(a) { return a.path.length > 0 || a.mode === 'leave' || a.anim === 'waiting' || (a.wantPose === 'sit' && a.anim !== 'stalled'); }
+function isLive(a) { return a.path.length > 0 || a.mode === 'leave' || a.anim === 'waiting' || a.anim === 'watch' || a.anim === 'limit' || (a.wantPose === 'sit' && a.anim !== 'stalled'); }
 
 // ------- servidores -------
 function syncServers(data) {
@@ -597,9 +688,12 @@ function project(x, y, z) {
 function placeLabels() {
   for (const a of S.actors.values()) {
     const p = a.g.position; const q = project(p.x, a.torso.position.y + 1.45 * a.g.scale.y, p.z);
-    const txt = a.anim === 'waiting' ? '✋ esperando você' : a.anim === 'stalled' ? '? sem sinal' : a.mode === 'sofa' || a.mode === 'leave' ? '' : `${ICON[a.anim] || '•'} ${clip(a.verb || (a.kind === 'agent' ? a.name : 'pensando'), 18)}`;
+    const txt = a.anim === 'waiting' ? '✋ esperando você' : a.anim === 'stalled' ? '? sem sinal' : a.anim === 'watch' ? `👁 acompanhando · ${a.count || a.nTasks || 1}`
+      : a.anim === 'limit' ? '⏸ limite atingido' : a.mode === 'sofa' || a.mode === 'leave' ? '' : a.anim === 'silent' ? `… ${clip(a.verb || 'em silêncio', 18)}`
+      : `${ICON[a.anim] || '•'} ${clip(a.verb || (a.kind === 'agent' ? a.name : 'pensando'), 18)}`;
     if (a.chip.textContent !== txt) a.chip.textContent = txt;
-    a.chip.className = `o3-chip ${a.anim === 'waiting' ? 'amber' : a.anim === 'stalled' ? 'gray' : ''} ${txt ? '' : 'hide'} ${S.hover === a.id ? 'hover' : ''}`;
+    const cls = `o3-chip ${a.anim === 'waiting' ? 'amber' : a.anim === 'stalled' || a.anim === 'limit' || a.anim === 'silent' ? 'gray' : a.anim === 'watch' ? 'watch' : ''} ${txt ? '' : 'hide'} ${S.hover === a.id ? 'hover' : ''}`;
+    if (a.chip.className !== cls) a.chip.className = cls;
     a.chip.style.transform = `translate(${Math.round(q.x)}px, ${Math.round(q.y)}px) translate(-50%, -100%)`;
   }
   // placas em degraus (racks lado a lado: as placas não se cobrem)
@@ -615,23 +709,47 @@ function hit(e) {
   const hits = ray.intersectObjects(S.pick, false);
   return hits.length ? hits[0].object.userData : null;
 }
+// cartão: o quê · há quanto tempo · última linha (atores, estações, bancada, quadros)
+function tipFor(u) {
+  const now = Date.now(); const m = S.model || {}; const om = OM();
+  const fmt = (title, x, extra) => { const c = om ? om.card(x, now) : null; return [title, c && c.text, c && c.line, extra].filter(Boolean).join('\n'); };
+  if (u.actorId) {
+    const a = S.actors.get(u.actorId); if (!a) return '';
+    const x = { label: a.label || a.bubble, since: a.since, line: a.line, silent: a.silent, lastSignalAt: a.lastSignalAt };
+    if (a.kind === 'agent' && a.task) x.label = `${a.task}${a.verb ? ' — ' + a.verb.toLowerCase() + (a.what ? ' ' + a.what : '') : ''}`;
+    return fmt(a.name, x, a.termId ? 'clique para ir ao terminal' : '');
+  }
+  if (u.station != null) { const k = (m.tasks || [])[u.station]; return k ? fmt(k.what || 'tarefa', { label: om ? om.taskText(k, now) : k.what, line: k.line }, 'clique para ir ao terminal') : 'estação livre'; }
+  if (u.bench != null) { const b = (m.bench || [])[u.bench]; return b ? fmt(b.name, { label: b.active ? `rodando ${b.fg || ''}`.trim() : 'parado', since: b.active ? b.since : null, line: [b.line, b.url].filter(Boolean).join(' · ') }, 'clique para ir ao terminal') : 'bancada livre: terminais comuns aparecem aqui'; }
+  if (u.pboard) return 'Projeto: git, servidor local e o último teste visto nos terminais';
+  if (u.rackId) return 'Clique para ver o servidor';
+  if (u.board) return 'Pendências deste projeto (painel Projeto)';
+  return '';
+}
 function onMove(e) {
   if (S.dragging) return;
   const u = hit(e);
-  const id = u && (u.actorId || (u.rackId && `rack:${u.rackId}`) || (u.board && 'board'));
+  const id = u && (u.actorId || (u.rackId && `rack:${u.rackId}`) || (u.board && 'board') || (u.station != null && `st:${u.station}`) || (u.bench != null && `bn:${u.bench}`) || (u.pboard && 'pboard'));
   S.renderer.domElement.style.cursor = id ? 'pointer' : 'grab';
   if (id === S.hover) { if (id) moveTip(e); return; }
   S.hover = id || null;
   if (!id) { S.tip.hidden = true; kick(); return; }
-  const a = u.actorId && S.actors.get(u.actorId);
-  S.tip.textContent = a ? `${a.name}${a.bubble ? ' — ' + a.bubble : ''}${a.termId ? ' · clique para ir ao terminal' : ''}` : u.rackId ? 'Clique para ver o servidor' : 'Pendências deste projeto (painel Projeto)';
+  S.tip.textContent = tipFor(u);
   S.tip.hidden = false; moveTip(e); kick();
 }
 function moveTip(e) { const r = S.stage.getBoundingClientRect(); S.tip.style.transform = `translate(${Math.round(e.clientX - r.left + 14)}px, ${Math.round(e.clientY - r.top + 14)}px)`; }
 function onDown(e) { S.downAt = { x: e.clientX, y: e.clientY }; }
 function onUp(e) {
   if (!S.downAt || Math.hypot(e.clientX - S.downAt.x, e.clientY - S.downAt.y) > 5) return;
-  const u = hit(e); if (!u) return closeCard();
+  const u = hit(e); if (!u) { S.tapped = null; S.tip.hidden = true; return closeCard(); }
+  // toque (celular/tablet): o 1º toque mostra o cartão; o 2º no mesmo lugar vai ao terminal
+  const id = u.actorId || (u.station != null && `st:${u.station}`) || (u.bench != null && `bn:${u.bench}`) || (u.pboard && 'pboard') || null;
+  if (e.pointerType === 'touch' && id && S.tapped !== id) { S.tapped = id; S.tip.textContent = tipFor(u); S.tip.hidden = false; moveTip(e); kick(); return; }
+  S.tapped = null;
+  const m = S.model || {};
+  if (u.station != null) { const k = (m.tasks || [])[u.station]; if (k && k.termId) S.api.goTerm(k.termId); return; }
+  if (u.bench != null) { const b = (m.bench || [])[u.bench]; if (b && b.termId) S.api.goTerm(b.termId); return; }
+  if (u.pboard) return;
   if (u.actorId) { const a = S.actors.get(u.actorId); if (a && a.termId) S.api.goTerm(a.termId); }
   else if (u.rackId) openRackCard(u.rackId);
   else if (u.board && S.api.openPending) S.api.openPending();
@@ -641,7 +759,7 @@ function onUp(e) {
 function mount(stage, api) {
   unmount();
   const pal = themeColors();
-  S = { stage, api, pal, owned: [], mats: {}, geos: {}, pick: [], actors: new Map(), racks: [], rackKey: '', desks: [], stations: [], frames: 0, raf: 0, lastFrame: 0, liveUntil: 0, hover: null, card: null };
+  S = { stage, api, pal, owned: [], mats: {}, geos: {}, pick: [], actors: new Map(), racks: [], rackKey: '', desks: [], stations: [], frames: 0, raf: 0, lastFrame: 0, liveUntil: 0, hover: null, card: null, bench: [], tapped: null };
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'low-power' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -683,7 +801,8 @@ function mount(stage, api) {
   S.mq = window.matchMedia('(prefers-color-scheme: dark)'); S.onTheme = () => retheme(); S.mq.addEventListener('change', S.onTheme);
   S.mo = new MutationObserver(() => retheme()); S.mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
   // relógio a cada minuto, luz a cada 10 min (só redesenha 1 quadro)
-  S.clockTimer = setInterval(() => { drawClock(); if (new Date().getMinutes() % 10 === 0) dayLight(); kick(); }, 60000);
+  // (as telas das estações/bancada/quadro mostram "há X min": a chave delas muda no máximo 1×/min — redesenha aqui)
+  S.clockTimer = setInterval(() => { drawClock(); if (new Date().getMinutes() % 10 === 0) dayLight(); if (S.model) screens(S.model); kick(); }, 60000);
   if (api.servers) { api.servers.list().then(syncServers).catch(() => {}); S.offServers = api.servers.onChanged ? api.servers.onChanged((d) => { if (S) syncServers(d); }) : null; }
   kick(600);
 }
@@ -698,7 +817,9 @@ function retheme() {
   S.hemi.groundColor.set(pal.dark ? '#2a2a33' : '#c8c8d2');
   for (const a of S.actors.values()) { a.isGray = null; }
   for (const d of S.desks) d.key = '';
-  S.boardKey = ''; S.meetKey = '';
+  for (const st of S.stations) st.key = '';
+  for (const b of S.bench) b.key = '';
+  S.boardKey = ''; S.meetKey = ''; S.pboardKey = '';
   drawClock(); dayLight(); update(S.model || { actors: [], tasks: [] });
 }
 
@@ -722,11 +843,20 @@ function update(model) {
   // telas das mesas acompanham quem está sentado nelas
   const byDesk = new Map(); for (const a of S.actors.values()) if (a.desk != null && a.mode !== 'leave') byDesk.set(a.desk, a);
   for (const d of S.desks) { const a = byDesk.get(d.i); drawMonitor(d, a && a.mode !== 'sofa' && a.mode !== 'machine' ? { anim: a.anim, verb: a.mode === 'waiting' ? 'Esperando você' : a.anim === 'stalled' ? 'Sem sinal' : (a.verb || 'Pensando'), what: a.what || '', mode: a.mode } : null); }
-  S.stations.forEach((st, i) => drawStation(st, (model.tasks || [])[i] || null));
+  screens(model);
   drawMeetScreen([...S.actors.values()].filter(a => a.kind === 'agent' && a.seat != null && a.mode !== 'leave').length);
   if (model.pending) drawBoard(model.pending);
   S.started = true;
   kick(300);
+}
+
+// telas que dependem do modelo: estações (as extras aparecem com tarefa), bancada de ferramentas, quadro do projeto
+function screens(model) {
+  const now = Date.now(); const tasks = model.tasks || [];
+  S.stations.forEach((st, i) => { st.g.visible = i < BASE_STATIONS || i < tasks.length; drawStation(st, tasks[i] || null, now); });
+  const bench = model.bench || [];
+  S.bench.forEach((b, i) => drawBench(b, bench[i] || null, now));
+  drawProjectBoard((model.boards || [])[0] || null, now);
 }
 
 function recenter() { if (!S) return; S.userCam = false; S.controls.reset(); if (S.fit) { S.camera.zoom = S.fit; S.camera.updateProjectionMatrix(); } kick(300); }

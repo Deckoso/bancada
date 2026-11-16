@@ -20,8 +20,8 @@
   };
   // v0.7 Windows: Ctrl no lugar do ⌘, fonte do Windows, caminho entre aspas duplas
   // no celular, platform é o do COMPUTADOR (o remote-bridge recebe do servidor): o caminho colado é para o shell de lá
-  const WIN = window.bancada && window.bancada.platform === 'win32';
-  const HOST = WIN ? 'PC' : 'Mac';
+  const WIN = window.UI.T.win;
+  const HOST = window.UI.T.host;
   const FONT = WIN ? '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace' : '"SF Mono", ui-monospace, Menlo, monospace';
 
   const terms = new Map();    // id -> { term, fit, el, projectId, name, alive, stale }
@@ -113,7 +113,7 @@
     if (!kind) { kind = /\.(md|markdown|mdx)$/i.test(r.abs) ? 'md' : 'dir'; }
     if (kind === 'md') { if (window.MdView) window.MdView.open(r.abs); return; }
     if (kind === 'dir') { if (L.openDir) L.openDir(r.abs).catch(toastErr); else window.UI.toast(`Abrir pasta só funciona no ${HOST}`); return; }
-    if (L.reveal) L.reveal(r.abs).catch(toastErr); else window.UI.toast(WIN ? 'Mostrar no Explorador só funciona no PC' : 'Mostrar no Finder só funciona no Mac');
+    if (L.reveal) L.reveal(r.abs).catch(toastErr); else window.UI.toast(`${window.UI.T.reveal} só funciona no ${HOST}`);
   }
   const linkCache = new Map();   // "termId\u0000linha" -> Promise<resultados> (teto 300, some sozinho em 15 s)
   // onde pode começar um caminho: "/x", "~/x", "./x", "../x" ou palavra com "/" (relativo); URL fica com o WebLinksAddon
@@ -236,6 +236,7 @@
     }
     if (k === 'v') return false;                                  // deixa o navegador colar (evento paste)
     if (!e.shiftKey && ['1', '2', '3', '4', '5'].includes(k)) return false;
+    if (e.shiftKey && ['m', 'r'].includes(k)) return false;       // v0.8: voz e recorte de tela (o app trata)
     if (e.shiftKey && ['t', 'j', 'f', '\\', '|', 'k'].includes(k)) {
       if (k === 'k') { term.clear(); e.preventDefault(); }
       return false;
@@ -266,6 +267,7 @@
         if (WIN) return winKey(term, e);
         if (e.type === 'keydown' && e.metaKey && e.key === 'k') { term.clear(); return false; }
         if (e.metaKey && ['1', '2', '3', '4', '5', 't', 'j', 'f', '\\'].includes(e.key)) return false;
+        if (e.metaKey && e.shiftKey && ['m', 'r'].includes(e.key.toLowerCase())) return false;   // v0.8: voz e recorte
         return true;
       });
       if (term.textarea) term.textarea.addEventListener('focus', () => { if (t.stale) fitOne(t, true); onFocusCb(t.id); });

@@ -129,6 +129,7 @@ function settings(p) {
   if ('theme' in p) { if (!['system', 'light', 'dark'].includes(p.theme)) throw bad('tema inválido'); o.theme = p.theme; }
   if ('onboarded' in p) o.onboarded = !!p.onboarded;
   if ('claude_skip_default' in p) o.claude_skip_default = !!p.claude_skip_default;
+  if ('mac_perm_notice_ok' in p) o.mac_perm_notice_ok = !!p.mac_perm_notice_ok;
   return o;
 }
 

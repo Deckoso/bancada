@@ -1,0 +1,10 @@
+{"scenario":"pedido de permissão: em pé esperando você; aprovado volta a trabalhar"}
+{"t":0,"term":"t1","hook":"UserPromptSubmit","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"apaga a pasta build"}}
+{"t":1000,"tr":{"type":"assistant","sessionId":"sess-exemplo","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_p1","name":"Bash","input":{"command":"rm -rf build","description":"Apagar build"}}]}}}
+{"t":1100,"term":"t1","hook":"PreToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"toolu_p1"}}
+{"t":1200,"term":"t1","hook":"PermissionRequest","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PermissionRequest","tool_name":"Bash"}}
+{"t":5000,"expect":{"state":"waiting","pose":"wait"}}
+{"t":240000,"expect":{"state":"waiting","pose":"wait"}}
+{"t":241000,"term":"t1","hook":"PostToolUse","p":{"session_id":"sess-exemplo","transcript_path":"$TR","cwd":"/tmp/projeto-exemplo","permission_mode":"default","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"toolu_p1"}}
+{"t":241000,"tr":{"type":"user","sessionId":"sess-exemplo","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_p1","content":""}]}}}
+{"t":241500,"expect":{"state":"working","pose":"think"}}

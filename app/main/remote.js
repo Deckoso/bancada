@@ -28,14 +28,46 @@ const BLOCKED = new Set(['app:pickFolder', 'app:openInCursor', 'app:importPrompt
   // v0.6: o celular não dispara consulta aos servidores nem abre o arquivo da lista no Mac
   'servers:refresh', 'servers:edit',
   // links: Finder e Safari são do Mac (no celular o link da web abre no próprio aparelho)
-  'links:openDir', 'links:reveal', 'links:openUrl']);
+  'links:openDir', 'links:reveal', 'links:openUrl',
+  // v0.8: o diagnóstico copia para a área de transferência do computador e lê o registro: só no próprio computador
+  'diag:report',
+  // v0.8: voz (microfone, modelo, motor) e recorte de tela são do computador; a foto do celular usa o attach:image
+  'voice:status', 'voice:download', 'voice:cancel', 'voice:setModel', 'voice:transcribe', 'voice:openHelp',
+  'shot:screen', 'shot:send', 'shot:cancel', 'shot:abort', 'shot:status',
+  // v0.8: atualização é do computador
+  'update:status', 'update:check', 'update:setAuto']);
+// e qualquer canal novo dessas famílias, mesmo que esquecido na lista acima
+const BLOCKED_PREFIX = /^(voice|shot|update):/;
+// Lista de LIBERAÇÃO: só estes canais são atendidos para o celular. Canal novo no index.js fica bloqueado até alguém
+// decidir e pôr aqui ou em BLOCKED (o teste "todo canal classificado" falha enquanto isso não acontece).
+const REMOTE_OK = new Set([
+  // projetos, notas, dia
+  'projects:list', 'projects:create', 'projects:update', 'projects:swapFocus', 'projects:discover', 'projects:git', 'projects:setActive', 'projects:reorder',
+  'items:list', 'items:create', 'items:update', 'items:delete', 'items:today', 'items:reorder', 'today:suggest', 'today:set',
+  // terminais (o celular pode o mesmo que digitar no terminal; login das IAs barrado por isLoginTerm)
+  'terminals:list', 'terminals:save', 'terminals:remove', 'terminals:byIds', 'terminals:newConversation', 'terminals:reorder', 'terminals:initialPrompt',
+  'pty:create', 'pty:kill', 'pty:live', 'pty:replay', 'pty:paste', 'pty:write', 'pty:resize',
+  // cartões, estado do Claude, motores (só leitura), IAs (só status)
+  'asks:list', 'asks:answer', 'asks:dismiss', 'claude:states', 'claude:context', 'claude:seen',
+  'engines:list', 'engines:check', 'engines:details', 'engines:suggest', 'ai:installed', 'ai:status',
+  // arquivos e git dentro do projeto; foto do celular → anexo
+  'files:roots', 'files:list', 'files:read', 'git:status', 'git:diff', 'git:commit', 'attach:image',
+  // sessões, resumo, faixa de atividade, servidores (leitura), layout (leitura)
+  'sessions:forProject', 'sessions:unassigned', 'sessions:assign', 'sessions:rescan', 'summary:refresh', 'summary:status',
+  'activity:list', 'servers:list', 'ui:layoutGet',
+  // v0.8: pulso do projeto (o aparelho já vê os terminais), medidor de limite (só %), cartões de retorno (a nota do
+  // feedback:answer é limpa de controles e passa pela redação do registro antes de entrar no "Relatar problema")
+  'pulse:list', 'limits:get', 'feedback:current', 'feedback:answer', 'feedback:dismiss',
+  // aguardando decisão: links:readMd lê qualquer .md; settings:set muda atalho/skip padrão
+  'links:resolve', 'links:readMd', 'settings:get', 'settings:set',
+]);
 // terminal de login das IAs (ai-login-*): nem abrir, nem digitar, nem ver pelo celular
 const isLoginTerm = (m) => /^pty:/.test(m.ch) && m.args && (/^ai-login-/.test(String(m.args[0] && typeof m.args[0] === 'object' ? m.args[0].id : m.args[0])));
 
 // Arquivos que a página remota pode baixar (lista fechada; nada de caminho vindo do cliente)
 const STATIC = {
   '/': 'index.html', '/index.html': 'index.html', '/styles.css': 'styles.css', '/dom.js': 'dom.js', '/dnd.js': 'dnd.js',
-  '/terminals.js': 'terminals.js', '/layout.js': 'layout.js', '/files-panel.js': 'files-panel.js', '/asks-ui.js': 'asks-ui.js', '/activity-ui.js': 'activity-ui.js', '/app.js': 'app.js', '/remote-bridge.js': 'remote-bridge.js', '/mobile.css': 'mobile.css',
+  '/terminals.js': 'terminals.js', '/layout.js': 'layout.js', '/files-panel.js': 'files-panel.js', '/asks-ui.js': 'asks-ui.js', '/office-model.js': 'office-model.js', '/voice-ui.js': 'voice-ui.js', '/camera-ui.js': 'camera-ui.js', '/activity-ui.js': 'activity-ui.js', '/app.js': 'app.js', '/remote-bridge.js': 'remote-bridge.js', '/mobile.css': 'mobile.css',
   '/vendor/xterm.js': 'vendor/xterm.js', '/vendor/xterm.css': 'vendor/xterm.css', '/vendor/addon-fit.js': 'vendor/addon-fit.js',
   '/vendor/addon-web-links.js': 'vendor/addon-web-links.js', '/vendor/addon-unicode11.js': 'vendor/addon-unicode11.js', '/vendor/aurora-tokens.css': 'vendor/aurora-tokens.css',
   '/office3d.js': 'office3d.js', '/md-view.js': 'md-view.js', '/vendor/three/three.module.js': 'vendor/three/three.module.js', '/vendor/three/three.core.js': 'vendor/three/three.core.js', '/vendor/three/OrbitControls.js': 'vendor/three/OrbitControls.js',
@@ -107,7 +139,12 @@ class Remote {
 
   stop() {
     clearTimeout(this.retry); this.retry = null;
-    for (const c of this.clients) { try { c.ws.close(1001, 'remoto desligado'); } catch {} }
+    // como na revogação: nada mais é atendido e o socket cai mesmo que o cliente ignore o fechamento
+    for (const c of this.clients) {
+      c.revoked = true;
+      try { c.ws.close(1001, 'remoto desligado'); } catch {}
+      setTimeout(() => { try { c.ws.terminate(); } catch {} }, 1000).unref();
+    }
     this.clients.clear();
     if (this.wss) this.wss.close();
     if (this.server) this.server.close();
@@ -138,6 +175,8 @@ class Remote {
       body = Buffer.from(String(body)
         .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
         // data-host: o sistema do computador (o celular precisa para pôr aspas certas no caminho colado no terminal)
+        // atualização é só do computador: o script nem vai para o celular
+        .replace('<script src="update-ui.js"></script>\n', '')
         .replace('<script src="dom.js"></script>', `<script src="remote-bridge.js" data-host="${process.platform === 'win32' ? 'win32' : 'darwin'}"></script>\n<script src="dom.js"></script>`)
         .replace('<link rel="stylesheet" href="styles.css">', '<link rel="stylesheet" href="styles.css">\n<link rel="apple-touch-icon" href="/apple-touch-icon.png">\n<meta name="apple-mobile-web-app-title" content="Bancada">\n<link rel="stylesheet" href="mobile.css">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'));
     }
@@ -203,7 +242,7 @@ class Remote {
     if (isLoginTerm(m)) { if (m.ch !== 'pty:write' && m.ch !== 'pty:resize') client.ws.send(JSON.stringify({ id: m.id, ok: false, error: 'não disponível no acesso remoto', code: 'REMOTE_BLOCKED' })); return; }
     if (m.ch === 'pty:write' || m.ch === 'pty:resize') { const fn = this.handlers.get(m.ch); if (fn) fn(...m.args); return; }
     const reply = (r) => { if (client.ws.readyState === 1) client.ws.send(JSON.stringify({ id: m.id, ...r })); };
-    if (BLOCKED.has(m.ch)) return reply({ ok: false, error: 'não disponível no acesso remoto', code: 'REMOTE_BLOCKED' });
+    if (BLOCKED.has(m.ch) || BLOCKED_PREFIX.test(String(m.ch)) || !REMOTE_OK.has(m.ch)) return reply({ ok: false, error: 'não disponível no acesso remoto', code: 'REMOTE_BLOCKED' });
     const fn = this.handlers.get(m.ch);
     if (!fn) return reply({ ok: false, error: 'canal desconhecido', code: 'ERR' });
     try { reply({ ok: true, data: await fn(...m.args) }); }
@@ -217,4 +256,4 @@ class Remote {
   }
 }
 
-module.exports = { Remote, tailscaleIp, BLOCKED, PORT_DEFAULT, isLoginTerm };
+module.exports = { Remote, tailscaleIp, BLOCKED, BLOCKED_PREFIX, REMOTE_OK, PORT_DEFAULT, isLoginTerm };

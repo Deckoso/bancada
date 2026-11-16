@@ -52,9 +52,9 @@ test('instalador baixado: .ps1 não pode ser página HTML nem binário; .sh come
   assert.equal(installerLooksOk('#!/bin/bash\n' + 'a'.repeat(300), 320, false), true);
 });
 
-test('hooks do Windows: PowerShell direto (sem shell), em segundo plano exceto o Stop; script com BOM', () => {
+test('hooks do Windows (reserva BANCADA_HOOKS_PS=1): PowerShell direto (sem shell), em segundo plano exceto o Stop; script com BOM', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks win-'));
-  const h = new ClaudeHooks({ dir, win: true }); h.setup();
+  const h = new ClaudeHooks({ dir, win: true, env: { BANCADA_HOOKS_PS: '1' } }); h.setup();
   const s = JSON.parse(fs.readFileSync(h.settingsFile, 'utf8'));
   for (const [ev, [{ hooks: [x] }]] of Object.entries(s.hooks)) {
     assert.match(x.command, /powershell\.exe$/);
@@ -148,6 +148,7 @@ test('segurança: aspas tipográficas dobradas, caminho de rede recusado, git se
   assert.throws(() => links.readMd('//srv/share/a.md'), /só arquivos/);
   const v = require('../../app/main/validate');
   assert.throws(() => v.dir('//srv/share'), /rede|absoluto|não existe/);
-  for (const f of ['files.js', 'gitview.js', 'git.js']) assert.match(fs.readFileSync(path.join(__dirname, '../../app/main', f), 'utf8'), /SAFE_GIT = \['-c', 'core\.fsmonitor=false'\]/, f);
+  assert.match(fs.readFileSync(path.join(__dirname, '../../app/main/git-safe.js'), 'utf8'), /SAFE_GIT = \['-c', 'core\.fsmonitor=false', '-c', 'log\.showSignature=false'\]/);
+  for (const f of ['files.js', 'gitview.js', 'git.js']) assert.match(fs.readFileSync(path.join(__dirname, '../../app/main', f), 'utf8'), /const \{ SAFE_GIT, check: gitSafe \} = require\('\.\/git-safe'\)/, f);
   assert.match(emitScriptPs("C:\\Users\\Ana’s\\x"), /Join-Path 'C:\\Users\\Ana’’s\\x'/);
 });

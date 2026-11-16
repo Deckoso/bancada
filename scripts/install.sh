@@ -10,6 +10,7 @@ if pgrep -f "Bancada.app/Contents/MacOS/Bancada" >/dev/null; then
   echo "A Bancada está aberta. Use: npm run update-app (monta agora e troca sozinha quando você sair da Bancada)."; exit 1
 fi
 node scripts/vendor.js >/dev/null
+[ -f app/renderer/vendor/aurora-tokens.css ] || { echo "falta app/renderer/vendor/aurora-tokens.css (defina BANCADA_AURORA_CSS)"; exit 1; }
 rm -rf dist dist-next
 npx electron-builder --mac dir --arm64 >/dev/null
 # tira as cópias antigas do registro do macOS (Launchpad/Spotlight/Abrir com)
